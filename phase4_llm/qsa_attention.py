@@ -36,9 +36,12 @@ def attention_entanglement(A: torch.Tensor) -> Dict[str, torch.Tensor]:
 
 def head_budgets(eff_rank: torch.Tensor, base_topk: int, kmin: int = 2,
                  kmax: Optional[int] = None) -> List[int]:
-    """Scale the per-head top-k by effective rank relative to the median."""
+    """Per-head top-k from effective rank. Measured eff ranks are heavy-
+    tailed (Qwen3-0.6B: median 2.8, max ~2000), so scale by the LOG ratio
+    to the median: k = base * clip(1 + ln(er / median), 1/4, 4)."""
     med = eff_rank.median().clamp_min(1e-6)
-    k = torch.round(base_topk * eff_rank / med).long().clamp(min=kmin)
+    f = (1 + torch.log(eff_rank.clamp_min(1e-6) / med)).clamp(0.25, 4.0)
+    k = torch.round(base_topk * f).long().clamp(min=kmin)
     if kmax is not None:
         k = k.clamp(max=kmax)
     return k.tolist()
