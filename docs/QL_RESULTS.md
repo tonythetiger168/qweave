@@ -164,6 +164,12 @@ this. Robustness to input noise is unchanged (NLL gap 2.50 → 2.57–2.61);
 long-context drift is preserved at −11 % and flattens at −22 % (the
 compressed model gains less from longer context).
 
+**Domain trap, measured on tasks.** The −22 % model healed *in-domain* on
+WikiText-103 (full run `vbhwminemznaek`) has WikiText-2 PPL **20.24 — better
+than dense 23.84** — yet ARC-easy 43.0, HellaSwag 42.8, MMLU 22.8, GSM8K 0.0:
+worse than the out-of-domain model on every task. A lower PPL here is
+evidence of overfitting the eval domain, not of a better model.
+
 This is the central evidence for the surpass plan: *any* "+10–20 % on
 MATH-500/GPQA" claim for a compressed small model needs public task
 numbers, because the cheap metric (PPL) and the expensive one (reasoning)
