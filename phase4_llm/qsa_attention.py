@@ -108,7 +108,7 @@ def qsa_block_mask(sel: torch.Tensor, N: int, block: int = 128):
 
     def pack(m):
         num = m.sum(-1).to(torch.int32)
-        idx = (~m).to(torch.int8).argsort(-1, stable=True).to(torch.int32)
+        idx = (~m).to(torch.int8).argsort(dim=-1, stable=True).to(torch.int32)
         return num, idx
 
     kn, ki = pack(part)
