@@ -158,3 +158,143 @@ def sensitivity_profile(weights: List[torch.Tensor], chi_probe: int = 8,
         err = torch.linalg.norm(W - Wh) / (torch.linalg.norm(W) + 1e-12)
         scores.append(float(err))
     return scores
+
+
+# ======================================================================
+# QL2: interleaved TT-matrix (true MPO) layers
+# ----------------------------------------------------------------------
+# The row-bits-then-col-bits ordering above puts the whole (out | in) cut
+# on ONE bond, so chi caps the matrix rank of W -- at chi=32 a 1024x1024
+# weight becomes rank-32. The standard MPO (CompactifAI, TT-matrix) pairs
+# out-mode k with in-mode k on the same site: cores (r, o_k, i_k, r'),
+# and no single bond bounds the matrix rank.
+# ======================================================================
+def tt_factorize(n: int, d: int) -> List[int]:
+    """Split n into d balanced factors (pads n up when it factors badly)."""
+    def split(m):
+        fs, p, x = [], 2, m
+        while p * p <= x:
+            while x % p == 0:
+                fs.append(p); x //= p
+            p += 1
+        if x > 1:
+            fs.append(x)
+        out = [1] * d
+        for f in sorted(fs, reverse=True):     # greedy: largest into smallest bin
+            out[out.index(min(out))] *= f
+        return sorted(out)
+    ideal = n ** (1.0 / d)
+    m = n
+    while True:
+        fs = split(m)
+        if max(fs) <= 2.5 * ideal:
+            return fs
+        m += 1
+
+
+class TTLinear(torch.nn.Module):
+    """nn.Linear replacement with TT-matrix (interleaved MPO) weight."""
+
+    def __init__(self, in_features: int, out_features: int, d: int = 4,
+                 rank: int = 64, eps: float = 1e-3, bias: bool = True,
+                 weight: Optional[torch.Tensor] = None, device=None, dtype=None):
+        super().__init__()
+        self.in_features, self.out_features, self.d = in_features, out_features, d
+        self.in_modes = tt_factorize(in_features, d)
+        self.out_modes = tt_factorize(out_features, d)
+        if weight is None:
+            weight = torch.nn.Linear(in_features, out_features, bias=False,
+                                     device=device).weight.data
+        cores = tt_matrix_decompose(weight.float(), self.out_modes, self.in_modes,
+                                    rank, eps)
+        dt = dtype or weight.dtype
+        self.cores = torch.nn.ParameterList(
+            [torch.nn.Parameter(c.to(device=device, dtype=dt).contiguous())
+             for c in cores])
+        self.bias = torch.nn.Parameter(torch.zeros(out_features, device=device,
+                                                   dtype=dt)) if bias else None
+
+    @property
+    def ranks(self) -> List[int]:
+        return [c.shape[3] for c in self.cores[:-1]]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        lead = x.shape[:-1]
+        I = 1
+        for m in self.in_modes:
+            I *= m
+        xin = x.reshape(-1, x.shape[-1]).to(self.cores[0].dtype)
+        if xin.shape[-1] < I:
+            xin = torch.nn.functional.pad(xin, (0, I - xin.shape[-1]))
+        B = xin.shape[0]
+        t = xin.reshape(B, 1, 1, I)                 # (B, Oacc, r, Irest)
+        oacc = 1
+        for c in self.cores:                        # (r, o, i, s)
+            r, o, i, s = c.shape
+            t = t.reshape(B, oacc, r, i, -1)
+            t = torch.einsum('barix,rois->baosx', t, c)
+            oacc *= o
+            t = t.reshape(B, oacc, s, -1)
+        y = t.reshape(B, oacc)[:, :self.out_features]
+        if self.bias is not None:
+            y = y + self.bias
+        return y.reshape(*lead, self.out_features).to(x.dtype)
+
+    def effective_weight(self) -> torch.Tensor:
+        return tt_matrix_reconstruct(list(self.cores), self.out_modes,
+                                     self.in_modes)[:self.out_features,
+                                                    :self.in_features]
+
+
+def tt_matrix_decompose(W: torch.Tensor, out_modes: List[int],
+                        in_modes: List[int], rank: int = 64,
+                        eps: float = 1e-3) -> List[torch.Tensor]:
+    """TT-SVD of W (out, in) into cores (r, o_k, i_k, r'), adaptive eps."""
+    d = len(out_modes)
+    O, I = 1, 1
+    for m in out_modes:
+        O *= m
+    for m in in_modes:
+        I *= m
+    T = torch.zeros(O, I, dtype=W.dtype, device=W.device)
+    T[:W.shape[0], :W.shape[1]] = W
+    t = T.reshape(*out_modes, *in_modes)
+    perm = [p for k in range(d) for p in (k, d + k)]     # (o1,i1,o2,i2,...)
+    t = t.permute(*perm).contiguous()
+    # per-bond eps so the total discarded weight stays ~eps
+    eps_b = eps / max(d - 1, 1)
+    cores, r = [], 1
+    for k in range(d - 1):
+        t = t.reshape(r * out_modes[k] * in_modes[k], -1)
+        U, S, Vh = torch.linalg.svd(t, full_matrices=False)
+        chi = _adaptive_cut(S, eps_b, rank)
+        cores.append(U[:, :chi].reshape(r, out_modes[k], in_modes[k], chi))
+        t = S[:chi, None] * Vh[:chi]
+        r = chi
+    cores.append(t.reshape(r, out_modes[-1], in_modes[-1], 1))
+    return cores
+
+
+def tt_matrix_reconstruct(cores: List[torch.Tensor], out_modes: List[int],
+                          in_modes: List[int]) -> torch.Tensor:
+    t = cores[0]
+    for c in cores[1:]:
+        t = torch.einsum('...a,aoib->...oib', t, c)
+    d = len(cores)
+    t = t.reshape(*[m for k in range(d) for m in (out_modes[k], in_modes[k])])
+    t = t.permute(*range(0, 2 * d, 2), *range(1, 2 * d, 2))
+    O, I = 1, 1
+    for m in out_modes:
+        O *= m
+    for m in in_modes:
+        I *= m
+    return t.reshape(O, I)
+
+
+def tt_rel_error(W: torch.Tensor, d: int, rank: int, eps: float = 0.0):
+    """(relative Frobenius error, #params) of a TT-matrix fit -- for budgeting."""
+    om, im = tt_factorize(W.shape[0], d), tt_factorize(W.shape[1], d)
+    cores = tt_matrix_decompose(W.float(), om, im, rank, eps)
+    Wh = tt_matrix_reconstruct(cores, om, im)[:W.shape[0], :W.shape[1]]
+    err = torch.linalg.norm(W.float() - Wh) / (torch.linalg.norm(W.float()) + 1e-12)
+    return float(err), mpo_num_params(cores)
