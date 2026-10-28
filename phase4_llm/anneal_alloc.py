@@ -104,7 +104,9 @@ def sqa(err, par, budget, lam=None, trotter=16, replicas=32, sweeps=400,
     T = T or 0.05 * (float(err.std()) + 1e-6) / P      # P*T = classical temp
     gamma0 = gamma0 or 2.0 * (float(err.std()) + 1e-6)
     ch = torch.randint(0, K, (replicas, P, L), generator=g, device=dev)
-    if init is not None:
+    if init is not None:            # start every slice near the greedy solution
+        keep = torch.rand(replicas, P, L, generator=g, device=dev) > 0.1
+        ch = torch.where(keep, init.view(1, 1, L).expand_as(ch), ch)
         ch[0, :] = init
     idx = torch.arange(L, device=dev)
 
@@ -186,15 +188,24 @@ def exact_dp(err, par, budget, bins=100_000, lower_bound=False) -> torch.Tensor:
 
 
 def allocate(err, par, budget, method='sqa', **kw) -> Dict:
-    """Run greedy (+ chosen annealer seeded with greedy); return the better."""
+    """Greedy, the chosen annealer (seeded with greedy) and the exact DP;
+    returns all three and picks the best feasible. For this SEPARABLE
+    objective the DP is optimal -- annealing earns its keep only once
+    pairwise layer interactions are added (see docs, QL7)."""
     g = greedy(err, par, budget)
-    Eg, eg, pg = energy(g, err, par, budget, kw.get('lam', 10.0 * float(err.max())))
+    lam = kw.pop('lam', 10.0 * float(err.max()))
+    _, eg, pg = energy(g, err, par, budget, lam)
     out = {'greedy': {'err': float(eg), 'params': float(pg), 'choice': g.tolist()}}
     if method in ('sa', 'sqa'):
         fn = anneal if method == 'sa' else sqa
-        c, _ = fn(err, par, budget, init=g, **kw)
+        t = __import__('time').time()
+        c, _ = fn(err, par, budget, lam=lam, init=g, **kw)
         _, e, p = energy(c, err, par, budget, 1.0)
-        out[method] = {'err': float(e), 'params': float(p), 'choice': c.tolist()}
+        out[method] = {'err': float(e), 'params': float(p), 'choice': c.tolist(),
+                       'seconds': round(__import__('time').time() - t, 2)}
+    c = exact_dp(err, par, budget)
+    _, e, p = energy(c, err, par, budget, 1.0)
+    out['exact_dp'] = {'err': float(e), 'params': float(p), 'choice': c.tolist()}
     feas = [(v['err'], k) for k, v in out.items() if v['params'] <= budget * 1.0001]
     out['best'] = min(feas)[1] if feas else 'greedy'
     return out

@@ -156,7 +156,7 @@ def main():
     ap.add_argument('--distill', action='store_true')
     ap.add_argument('--kd-alpha', type=float, default=0.5)
     ap.add_argument('--kd-t', type=float, default=1.0)
-    ap.add_argument('--heal-scope', choices=['all', 'tn'], default='all')
+    ap.add_argument('--heal-scope', choices=['all', 'tn'], default='tn')
     ap.add_argument('--gate', type=float, default=3.0)
     ap.add_argument('--save-model', action='store_true')
     args = ap.parse_args()
@@ -348,7 +348,8 @@ def main():
     rows = heal_data(tok, n=args.steps * args.batch, seq=args.seq)
     if args.heal_scope == 'tn':      # only TN cores + biases (+ norms)
         for n_, p in model.named_parameters():
-            p.requires_grad_('cores' in n_ or 'norm' in n_ or n_.endswith('bias'))
+            p.requires_grad_(any(t in n_ for t in ('cores', '.A', '.B', 'norm'))
+                             or n_.endswith('bias'))
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0)
     warm = max(1, args.steps // 20)
@@ -418,11 +419,8 @@ def main():
     with open(f'{args.out}/ql15_report.json', 'w') as f:
         json.dump(report, f, indent=2)
     if args.save_model and not args.smoke:
-        if hasattr(model, 'disable_input_require_grads'):
-            model.disable_input_require_grads()      # drop unpicklable hook
-        if hasattr(model, 'gradient_checkpointing_disable'):
-            model.gradient_checkpointing_disable()
-        torch.save(model, f'{args.out}/model.pt')
+        from phase4_llm.tn_layers import save_compressed
+        save_compressed(model, args.model, f'{args.out}/model.pt')
         tok.save_pretrained(f'{args.out}/tokenizer')
     print("\n[ql1.5] report:", json.dumps(report, indent=2))
     ok = report['ppl_relative_increase_pct'] <= args.gate

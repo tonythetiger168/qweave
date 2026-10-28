@@ -335,18 +335,48 @@ class LowRankLinear(torch.nn.Module):
 
 
 def whitened_svd(W: torch.Tensor, gram: torch.Tensor, damp: float = 1e-4):
-    """Returns (U*Sigma, Sigma, V^T S^-1) of W S where gram = X X^T = S S^T.
+    """Returns (U Sigma^1/2, Sigma, Sigma^1/2 V^T S^-1) of W S, gram = S S^T.
+    The balanced split keeps both factors at the same scale for AdamW.
     Output-norm error at rank r is sqrt(sum_{i>=r} Sigma_i^2)."""
     W = W.double()
     G = gram.double()
     G = G + damp * G.diagonal().mean() * torch.eye(G.shape[0], dtype=G.dtype,
                                                    device=G.device)
     S = torch.linalg.cholesky(G)                            # lower, G = S S^T
-    U, Sig, Vh = torch.linalg.svd(W @ S, full_matrices=False)
+    U, Sig, Vh = torch.linalg.svd((W @ S).float(), full_matrices=False)  # fp32 SVD
+    U, Sig, Vh = U.double(), Sig.double(), Vh.double()
     Bfull = torch.linalg.solve_triangular(S, Vh, upper=False, left=False)  # Vh S^-1
-    return U * Sig, Sig, Bfull
+    rs = Sig.sqrt()
+    return U * rs, Sig, rs[:, None] * Bfull
 
 
 def lowrank_from_svd(US, Bfull, rank, bias=None, dtype=torch.float32):
     return LowRankLinear(US[:, :rank].to(dtype), Bfull[:rank].to(dtype),
                          None if bias is None else bias.to(dtype))
+
+
+def compression_plan(model) -> dict:
+    """{qualified module name: [out, in, rank, has_bias]} for LowRankLinear."""
+    return {n: [m.out_features, m.in_features, m.rank, m.bias is not None]
+            for n, m in model.named_modules() if isinstance(m, LowRankLinear)}
+
+
+def save_compressed(model, model_id: str, path: str):
+    torch.save({'model_id': model_id, 'plan': compression_plan(model),
+                'state_dict': {k: v.detach().to(torch.bfloat16).cpu()
+                               for k, v in model.state_dict().items()}}, path)
+
+
+def load_compressed(path: str, device='cuda', dtype=torch.bfloat16):
+    """Rebuild a model saved by save_compressed (HF base + LowRankLinear)."""
+    from transformers import AutoModelForCausalLM
+    ck = torch.load(path, map_location='cpu', weights_only=False)
+    model = AutoModelForCausalLM.from_pretrained(ck['model_id'], dtype=dtype,
+                                                 attn_implementation="sdpa")
+    for name, (o, i, r, hb) in ck['plan'].items():
+        parent, _, child = name.rpartition('.')
+        setattr(model.get_submodule(parent), child,
+                LowRankLinear(torch.zeros(o, r, dtype=dtype), torch.zeros(r, i, dtype=dtype),
+                              torch.zeros(o, dtype=dtype) if hb else None))
+    model.load_state_dict(ck['state_dict'], strict=True)
+    return model.to(device).eval()

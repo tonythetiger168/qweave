@@ -72,7 +72,7 @@ stage ql15_smoke    20m python phase4_llm/heal_finetune.py --smoke --steps 30 --
 stage ql2_bench     40m python phase4_llm/bench_ql2.py --out $OUT/ql2 $( [ "$Q" = 1 ] && echo --quick )
 
 # ---- QL1.5: heal runs on Qwen3-0.6B ----
-stage ql15_dense    30m python phase4_llm/heal_finetune.py --model $M --target-saving 0 \
+stage ql15_dense    30m python phase4_llm/heal_finetune.py --model $M --target-saving 0 --heal-scope all \
     --steps $(( S / 10 )) --batch 8 --seq 512 --out $OUT/ql15_dense
 stage ql15_s30_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.3 \
     --steps $S --batch 8 --seq 512 --lr 1e-4 --distill --save-model --out $OUT/ql15_s30_kd

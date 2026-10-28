@@ -26,7 +26,8 @@ DEFAULT_TASKS = "arc_easy,arc_challenge,hellaswag,piqa,winogrande,mmlu,gsm8k"
 def load(spec, device):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     if spec.endswith('.pt'):
-        model = torch.load(spec, map_location=device, weights_only=False)
+        from phase4_llm.tn_layers import load_compressed
+        model = load_compressed(spec, device)
         tok = AutoTokenizer.from_pretrained(os.path.join(os.path.dirname(spec),
                                                          'tokenizer'))
     else:
