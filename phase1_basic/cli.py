@@ -1,5 +1,5 @@
 """
-qpu-sim-suite command-line interface.
+qweave command-line interface.
 """
 
 import argparse
@@ -134,11 +134,11 @@ def run_phase3():
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='qpu-sim-suite',
-        description='qpu-sim-suite: QPU software simulation suite — state-vector, '
+        prog='qweave',
+        description='qweave: qweave quantum simulation & AI suite — state-vector, '
                     'Clifford/stabilizer and MPS simulators, noise models & surface '
                     'codes, and hybrid algorithms (VQE, QAOA, QPE) with benchmarks.',
-        epilog='Examples: qpu-sim-suite | --phase 1 | --phase 2 | --phase 3'
+        epilog='Examples: qweave | --phase 1 | --phase 2 | --phase 3'
     )
     parser.add_argument('--phase', type=int, choices=[1, 2, 3],
                         help='Run specific phase only')

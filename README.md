@@ -1,4 +1,4 @@
-# QPU Software Simulation Suite
+# qweave
 
 A complete quantum computing simulation platform with four simulators, three development phases, and twelve milestones. Designed to support quantum hardware R&D before fabrication.
 
@@ -6,7 +6,7 @@ A complete quantum computing simulation platform with four simulators, three dev
 **Date:** September 2026  
 **Hardware Project:** [quantum-rd-plan](https://github.com/tonythetiger168/quantum-rd-plan)
 
-> **Implementation repository:** [qpu-sim-suite2](https://github.com/tonythetiger168/qpu-sim-suite/tree/main/docs) — the full simulator codebase (state-vector / Clifford / MPS engines with gate fusion and Pauli-frame sampling, circuit IR + OpenQASM I/O, trajectory noise simulator, detector-error-model + PyMatching pipeline, IPEA, sparse VQE).
+> **Implementation repository:** [qweave](https://github.com/tonythetiger168/qweave/tree/main/docs) — the full simulator codebase (state-vector / Clifford / MPS engines with gate fusion and Pauli-frame sampling, circuit IR + OpenQASM I/O, trajectory noise simulator, detector-error-model + PyMatching pipeline, IPEA, sparse VQE).
 
 ![Roadmap Demo](demo.gif)
 
@@ -140,7 +140,7 @@ for i in range(999):
 ## Project Structure
 
 ```
-qpu-sim-suite/
+qweave/
 |-- __main__.py                 # Entry point
 |-- index.html                  # Interactive roadmap website
 |-- demo.gif                    # Animated roadmap demo

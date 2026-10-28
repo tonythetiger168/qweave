@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qpu-sim-suite"
+name = "qweave"
 version = "1.1.0"
-description = "QPU software simulation suite: state-vector, Clifford/stabilizer and MPS simulators, noise models, surface codes, and hybrid algorithms (VQE, QAOA, QPE/IPEA) with benchmarks"
+description = "qweave quantum simulation & AI suite: state-vector, Clifford/stabilizer and MPS simulators, noise models, surface codes, and hybrid algorithms (VQE, QAOA, QPE/IPEA) with benchmarks"
 readme = "docs/README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -25,13 +25,13 @@ dev = [
     "pymatching>=2.0",
     "torch>=2.0",
 ]
-all = ["qpu-sim-suite[dev]"]
+all = ["qweave[dev]"]
 
 [project.scripts]
-qpu-sim-suite = "phase1_basic.cli:main"
+qweave = "phase1_basic.cli:main"
 
 [project.urls]
-Repository = "https://github.com/tonythetiger168/qpu-sim-suite2"
+Repository = "https://github.com/tonythetiger168/qweave"
 
 [tool.setuptools]
-packages = ["phase1_basic", "phase2_noise", "phase3_scale"]
+packages = ["phase1_basic", "phase2_noise", "phase3_scale", "phase4_llm"]

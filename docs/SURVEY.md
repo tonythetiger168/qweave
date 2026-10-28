@@ -1,4 +1,4 @@
-# 全球 QPU 模擬器調查與 qpu-sim-suite 改進計劃
+# 全球 QPU 模擬器調查與 qweave 改進計劃
 
 日期：2026-09-20
 
@@ -56,7 +56,7 @@
 
 ---
 
-## 3. 對 qpu-sim-suite 的啟示（gap analysis）
+## 3. 對 qweave 的啟示（gap analysis）
 
 目前套件（numpy 實作，三階段：basic simulators / noise+EC / scale+algorithms）定位為教學/研究雛形，與世界級工具的差距：
 
@@ -125,7 +125,7 @@
 > `mps_canonical.py`（canonical form + adaptive χ + Schmidt 熵，取代
 > P1.3 舊 MPS）、`ipe.py`（IPEA：n+1 vs n+k qubits）、`vqe_sparse.py`
 > （sparse Hamiltonian + parameter-shift）。GitHub repo（private）：
-> github.com/tonythetiger168/qpu-sim-suite2。
+> github.com/tonythetiger168/qweave。
 
 ### Phase C — 長期（3–6 個月）：規模與演算法 ✅ 已完成
 

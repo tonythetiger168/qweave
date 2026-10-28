@@ -1,8 +1,8 @@
 """
-QPU Software Simulation Suite -- command-line entry.
+qweave -- command-line entry.
 
 The full CLI lives in phase1_basic.cli so that the installed console
-script `qpu-sim-suite` and `python __main__.py` share one code path.
+script `qweave` and `python __main__.py` share one code path.
 """
 
 import os

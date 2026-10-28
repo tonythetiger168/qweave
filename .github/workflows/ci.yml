@@ -26,4 +26,4 @@ jobs:
       - name: Phase C validation (27 checks: backends/MPS/IPEA/VQE/torch)
         run: python phase3_scale/validate_p0c.py
       - name: CLI smoke test
-        run: qpu-sim-suite --phase 1
+        run: qweave --phase 1

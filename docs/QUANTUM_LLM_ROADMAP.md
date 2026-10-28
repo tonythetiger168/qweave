@@ -1,7 +1,7 @@
 # Quantum-Enhanced LLM: Technical Analysis & CUDA Roadmap
 
 > 中文摘要：本文分析費米宇宙 FermiQLLM 1.0（2026-09-28 發布）的技術主張，對照已發表的
-> 量子啟發（quantum-inspired）文獻逐項評估，並提出以本套件（qpu-sim-suite）為驗證骨幹的
+> 量子啟發（quantum-inspired）文獻逐項評估，並提出以本套件（qweave）為驗證骨幹的
 > 開源可復現路線圖（QL1–QL4），核心為 CUDA 訓練整合。
 
 ## 1. What FermiQLLM 1.0 Claims
@@ -39,7 +39,7 @@ wouldn't be described in the TN-compression literature above.
 ### Where an open project can beat them
 - **Reproducibility**: open weights, open harness, third-party verification. Their numbers cannot be checked.
 - **Honest scope**: claim "quantum-inspired TN compression" (defensible) instead of "quantum enhancement".
-- **Validation backbone**: use qpu-sim-suite's simulators to ground-truth every quantum-mechanical
+- **Validation backbone**: use qweave's simulators to ground-truth every quantum-mechanical
   metaphor (entanglement spectra of attention maps, annealing energy landscapes) instead of using
   them purely as inspiration.
 

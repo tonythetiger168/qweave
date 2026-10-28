@@ -1,4 +1,4 @@
-# QPU Software Simulation Suite
+# qweave
 
 ![validation](https://img.shields.io/badge/validation-63%2F63%20checks-brightgreen)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -17,8 +17,8 @@ A complete quantum computing simulation platform with three development phases, 
 ## Quickstart
 
 ```bash
-git clone https://github.com/tonythetiger168/qpu-sim-suite2.git
-cd qpu-sim-suite2
+git clone https://github.com/tonythetiger168/qweave.git
+cd qweave
 pip install numpy scipy qiskit-aer stim pymatching torch   # optional accelerators
 
 python3 __main__.py --phase 1     # run milestone demos
@@ -309,7 +309,7 @@ All 22 checks in `phase3_scale/validate_p0c.py` PASS.
 ## Project Structure
 
 ```
-qpu-sim-suite/
+qweave/
 |-- __main__.py                 # Entry point (--phase 1|2|3 milestones)
 |-- phase1_basic/
 |   |-- simulators.py           # State-vector, Clifford, MPS (+ Naive refs)
