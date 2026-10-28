@@ -36,23 +36,25 @@ def energy(choice, err, par, budget, lam):
 
 def greedy(err, par, budget) -> torch.Tensor:
     """Start every layer at its cheapest option, buy the best
-    error-drop-per-parameter upgrade until the budget is spent."""
-    L, K = err.shape
-    ch = par.argmin(1).clone()
-    used = par[torch.arange(L), ch].sum().item()
+    error-drop-per-parameter upgrade until the budget is spent
+    (numpy-vectorized over all (layer, option) upgrades per step)."""
+    import numpy as np
+    e = err.detach().cpu().double().numpy()
+    w = par.detach().cpu().double().numpy()
+    L = e.shape[0]
+    ch = w.argmin(1)
+    rows = np.arange(L)
+    used = w[rows, ch].sum()
     while True:
-        best, arg = 0.0, None
-        for l in range(L):
-            for k in range(K):
-                dp = (par[l, k] - par[l, ch[l]]).item()
-                de = (err[l, ch[l]] - err[l, k]).item()
-                if de > 0 and dp > 0 and used + dp <= budget and de / dp > best:
-                    best, arg = de / dp, (l, k, dp)
-        if arg is None:
-            return ch
-        l, k, dp = arg
+        de = e[rows, ch][:, None] - e                 # error drop per upgrade
+        dp = w - w[rows, ch][:, None]                 # extra params
+        ok = (de > 0) & (dp > 0) & (used + dp <= budget)
+        if not ok.any():
+            return torch.as_tensor(ch, device=err.device)
+        ratio = np.where(ok, de / np.where(dp > 0, dp, 1), -np.inf)
+        l, k = np.unravel_index(np.argmax(ratio), ratio.shape)
+        used += dp[l, k]
         ch[l] = k
-        used += dp
 
 
 def anneal(err, par, budget, lam=None, replicas=256, sweeps=400,
@@ -188,6 +190,8 @@ def exact_dp(err, par, budget, bins=100_000, lower_bound=False) -> torch.Tensor:
 
 
 def allocate(err, par, budget, method='sqa', **kw) -> Dict:
+    if torch.cuda.is_available():          # thousands of tiny ops: GPU, not CPU
+        err, par = err.cuda(), par.cuda()
     """Greedy, the chosen annealer (seeded with greedy) and the exact DP;
     returns all three and picks the best feasible. For this SEPARABLE
     objective the DP is optimal -- annealing earns its keep only once
