@@ -61,10 +61,11 @@ Leverages existing suite modules. All targets reproducible on 1–8 GPUs.
 - **Still open (moved to QL1.5)**: LoRA-style heal fine-tune on a real 0.6B model —
   needs GPU env (single 24GB card); see QL2.
 
-### QL1.5 — Heal Fine-tune (deferred from QL1; needs 1 GPU)
-Single-GPU LoRA-style heal on Qwen3-0.6B / SmolLM-360M (bf16, torch.compile, FA2,
-cosine LR; WikiText-2 + Alpaca). Acceptance: PPL relative increase ≤3%, VRAM −30%
-at 4K context, latency neutral on RTX 4090/A100.
+### QL1.5 — Heal Fine-tune ✅ READY (2026-10-28, awaiting GPU run)
+Delivered: `phase4_llm/heal_finetune.py` (sensitivity-ranked compression, PPL eval,
+AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
+`docs/QL1.5_RUNPOD.md` (RTX 4090, est. cost < $1). Smoke mode passes on CPU
+(heal improves PPL −2.4% on the tiny test model). Next: run on Qwen3-0.6B.
 
 ### QL2 — CUDA Training at Scale + Annealing Optimizer (Month 2)
 **Goal**: make TN training fast and add the "quantum annealing" component — classically.

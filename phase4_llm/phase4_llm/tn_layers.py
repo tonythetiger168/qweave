@@ -65,20 +65,17 @@ def mpo_num_params(cores: List[torch.Tensor]) -> int:
     return int(sum(c.numel() for c in cores))
 
 
-def mpo_reconstruct(cores: List[torch.Tensor]) -> torch.Tensor:
+def mpo_reconstruct(cores: List[torch.Tensor],
+                    row_bits: Optional[int] = None) -> torch.Tensor:
     """Back to dense (2^row_bits, 2^col_bits) -- for validation only."""
     t = cores[0]                                   # (1, p0, b0)
     for c in cores[1:]:                            # (a, p, b)
         t = torch.einsum('...b,bqc->...qc', t, c)  # contract trailing bond
     t = t[0, ..., 0]                               # (2,)*k
-    return t.reshape(-1, t.numel() // (2 ** 0)).reshape(
-        int(2 ** (len(cores) // 1)), -1) if False else _flat(t)
-
-
-def _flat(t: torch.Tensor) -> torch.Tensor:
     k = t.dim()
-    half = k // 2
-    return t.reshape(2 ** half, 2 ** (k - half))
+    if row_bits is None:
+        row_bits = k // 2
+    return t.reshape(2 ** row_bits, 2 ** (k - row_bits))
 
 
 # ----------------------------------------------------------------------
@@ -140,7 +137,7 @@ class MPOLinear(torch.nn.Module):
         return y
 
     def effective_weight(self) -> torch.Tensor:
-        return mpo_reconstruct(list(self.cores))[
+        return mpo_reconstruct(list(self.cores), row_bits=self.row_bits)[
             :self.out_features, :self.in_features]
 
 
@@ -154,8 +151,10 @@ def sensitivity_profile(weights: List[torch.Tensor], chi_probe: int = 8,
     """
     scores = []
     for W in weights:
-        cores = mpo_decompose(W.detach().float(), chi_max=chi_probe, eps=eps)
-        Wh = mpo_reconstruct(cores)[:W.shape[0], :W.shape[1]].to(W.dtype)
+        rb = max(1, (W.shape[0] - 1).bit_length())
+        cores = mpo_decompose(W.detach().float(), chi_max=chi_probe, eps=eps,
+                              row_bits=rb)
+        Wh = mpo_reconstruct(cores, row_bits=rb)[:W.shape[0], :W.shape[1]].to(W.dtype)
         err = torch.linalg.norm(W - Wh) / (torch.linalg.norm(W) + 1e-12)
         scores.append(float(err))
     return scores
