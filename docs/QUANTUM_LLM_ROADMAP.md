@@ -79,6 +79,11 @@ AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
   TN-annealing formalism). Acceptance: matches/beats AdamW on a small RLHF/GRPO run at ≤ 0.7× GPU-hours.
 - **CUDA specifics**: bf16 params + fp32 MPO cores, CUDA graphs for the einsum chain, pin memory,
   overlap comm; benchmark matrix recorded in `docs/QL2_BENCHMARKS.md`.
+- **Gauge fixing (G1, see §3.1)**: canonicalize MPO cores (left/right/mixed gauge via QR,
+  ported from `MPSCanonical`) before heal and before low-bit quantization; compare free-gauge
+  vs fixed-gauge heal on loss curve and post-quant PPL.
+- **4B checkpoint (§3.1 S1)**: run the full compress→heal→eval chain on Qwen3-4B, the same
+  scale as FermiQLLM's March-2026 pilot.
 
 ### QL3 — Entanglement Diagnostics & QSA Attention (Month 3)
 **Goal**: turn the physics metaphor into a measurable, useful mechanism.
@@ -87,6 +92,8 @@ AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
 - **QSA (quantum-inspired sparse attention)**: prune/gate attention edges by measured entanglement;
   implement as CUDA kernel (block-sparse flash attention variant).
 - Acceptance: ≥ 1.2× long-context (16K+) throughput at ≤ 1pt quality drop vs dense FA2 baseline.
+- **Data-representation stage (§3.1 D1)**: TT-embedding for the token embedding table and
+  tied LM head (Qwen3 vocab 151,936 × d), the largest single matrices in small models.
 
 ### QL4 — Open Benchmark & Reproducibility Harness (Month 4)
 **Goal**: publish what FermiQLLM didn't.
@@ -94,8 +101,59 @@ AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
   + our own **QRB-style robustness suite** (input noise, prompt perturbation, long-context drift).
 - Head-to-head table vs uncompressed baseline and (where legal) reproduced CompactifAI/Minima
   configurations — every number reproducible from repo + config.
+- **FermiQLLM head-to-head (§3.1 E1/E2)**: MATH-500 / GPQA-Diamond / BBH with named baselines,
+  pinned harness version, seeds and configs; quality-vs-compression Pareto plot.
 - Tie-in: Clifford sampler generates device-level error models for *future* quantum-hardware
   offloading experiments (keeps the suite's original mission).
+
+## 3.1 Beat-FermiQLLM Plan (added 2026-10-28)
+
+**Goal**: match or beat every FermiQLLM 1.0 claim *with numbers anyone can re-run*. Their
+claims are internal, baseline-free and unpublished (see
+[FERMIQLLM_GLOBAL_INVESTIGATION.md](FERMIQLLM_GLOBAL_INVESTIGATION.md)); ours ship with
+weights, configs and logs. We win on verifiability first and on numbers second.
+
+### Claim-by-claim scoreboard
+
+| FermiQLLM stage / claim | qweave answer | Phase | Status |
+|---|---|---|---|
+| Model structure: tensor networks | `MPOLinear`, adaptive-χ TT-SVD | QL1 | ✅ done |
+| Training: heal after compression | `heal_finetune.py` | QL1.5 | ⏳ GPU run |
+| RL: "quantum simulated annealing", −25% RL cost | GPU annealing optimizer, target ≤ 0.7× GPU-hours (−30%) | QL2 | planned |
+| "Gauge degrees of freedom" (never explained) | **G1** gauge-fixed MPO heal + quant | QL2 | **new** |
+| Data representation | **D1** TT-embedding + tied LM head | QL3 | **new** |
+| Inference +15% (speed or quality unstated) | Triton MPO matmul (speed) + QSA attention; report *both* tok/s and quality | QL2–QL3 | planned |
+| Evaluation: MATH-500/GPQA-D/BBH +10–20% | **E1** head-to-head with named baselines | QL4 | **new** |
+| 4B pilot scale | **S1** Qwen3-4B checkpoint | QL2 | **new** |
+
+### New work items
+
+- **G1 — Gauge fixing.** An MPO has a gauge freedom on every bond (insert `A·A⁻¹`). Fixing it
+  (canonical form via QR sweeps, as in `MPSCanonical`) makes heal gradients well-conditioned and
+  bounds per-core scale for quantization. Acceptance: fixed-gauge heal reaches the free-gauge
+  PPL in ≤ 0.8× steps, *or* lowers int4 PPL gap by ≥ 20%. Publish the negative if neither holds.
+- **D1 — TT embedding / LM head.** In Qwen3-0.6B the 151,936 × 1,024 embedding is ~26% of
+  params. Acceptance: ≥ 4× compression of that matrix at ≤ 0.5 PPL increase after heal.
+- **S1 — 4B checkpoint.** Qwen3-4B through compress → heal → eval on 1× H100 or 2× A100.
+  Gives a like-for-like size point against FermiQLLM's pilot.
+- **E1 — Head-to-head eval.** MATH-500, GPQA-Diamond, BBH (plus MMLU, GSM8K) via
+  lm-evaluation-harness, pinned version, fixed seeds, greedy decoding, configs in repo.
+  Baselines, all named:
+  1. Uncompressed Qwen3-0.6B / Qwen3-4B (same base family FermiQLLM uses).
+  2. Same models at equal parameter count by plain truncated-SVD (non-TN control).
+  3. Published CompactifAI / Minima numbers where comparable.
+- **E2 — Quality-vs-compression line.** FermiQLLM claims *accuracy gains*; TN compression
+  trades accuracy for efficiency. Report a Pareto curve (params, tok/s, VRAM vs score) instead
+  of a single headline number, so we are judged on the metric we actually target. Any
+  claimed accuracy *gain* must survive ≥ 3 seeds and a paired-bootstrap CI.
+
+### Win conditions
+
+1. **Verifiable**: every number reproducible from one command + pinned config (they have none).
+2. **RL cost**: annealing optimizer ≤ 0.7× GPU-hours vs AdamW at equal reward (beats −25%).
+3. **Inference**: ≥ 1.15× tok/s *and* stated quality delta at equal params (their +15%, made precise).
+4. **Benchmarks**: within 1 pt of uncompressed base at ≥ 40% fewer params, with CIs.
+5. **Disclosure**: tech report on arXiv, including negative results.
 
 ## 4. Risks & Mitigations
 
@@ -104,6 +162,7 @@ AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
 | TN matmul slower than cuBLAS at small χ | Keep dense fallback per layer (sensitivity router) |
 | Accuracy drop beyond budget | Heal longer + mixed dense/TN layers (Minima finding) |
 | GPU scarcity in dev env | Phase-gated: QL1 on single 24GB card; QL2 needs 4×A100 (cloud) |
+| Head-to-head framed as accuracy race we can't win | Lead with E2 Pareto + verifiability; never claim gains without CIs |
 | "Quantum-washing" criticism | Scope claims to "quantum-inspired", cite prior art, publish negatives |
 
 ## 5. References
