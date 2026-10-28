@@ -14,7 +14,7 @@ import argparse, json, os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import torch
 
-from phase4_llm.tn_layers import TTLinear, tt_matrix_reconstruct
+from phase4_llm.tn_layers import TTLinear, tt_matrix_reconstruct, LowRankLinear
 from phase4_llm.anneal_alloc import greedy, anneal, sqa, exact_dp, energy
 
 
@@ -54,6 +54,12 @@ def bench_layers(dev, quick):
         x = torch.randn(ntok, fin, device=dev, requires_grad=True)
         dense = torch.nn.Linear(fin, fout, device=dev)
         variants = [('dense', dense, fin * fout)]
+        for keep in (0.3, 0.5, 0.7):                  # whitened 2-site MPO (wsvd)
+            r = int(keep * fin * fout / (fin + fout))
+            lr = LowRankLinear(torch.randn(fout, r, device=dev) * 0.02,
+                               torch.randn(r, fin, device=dev) * 0.02,
+                               torch.zeros(fout, device=dev))
+            variants.append((f'lowrank keep{keep}', lr, r * (fin + fout)))
         for r in ranks:
             tt = TTLinear(fin, fout, d=4, rank=r, eps=0.0, device=dev)
             n = sum(c.numel() for c in tt.cores)
@@ -122,6 +128,7 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default='/workspace/ql2')
     ap.add_argument('--quick', action='store_true')
+    ap.add_argument('--layers-only', action='store_true')
     a = ap.parse_args()
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -129,6 +136,6 @@ if __name__ == '__main__':
     rep = {'device': dev,
            'gpu': torch.cuda.get_device_name() if dev == 'cuda' else None,
            'layers': bench_layers(dev, a.quick),
-           'alloc': bench_alloc(dev, a.quick)}
+           'alloc': [] if a.layers_only else bench_alloc(dev, a.quick)}
     json.dump(rep, open(f'{a.out}/ql2_bench.json', 'w'), indent=2)
     print("saved", f'{a.out}/ql2_bench.json')
