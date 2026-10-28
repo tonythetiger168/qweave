@@ -40,7 +40,7 @@ PPL = WikiText-2 test, 1024-token windows.
 
 | Format | PPL before heal | PPL after heal | Train tok/s | Notes |
 |---|---|---|---|---|
-| legacy row\|col MPO (`--format mpo`, χ=32, 50 % of q/o/gate/up) | 755 084 | MPO_HEALED | MPO_TOKS | χ caps matrix rank at 32 |
+| legacy row\|col MPO (`--format mpo`, χ=32, 50 % of q/o/gate/up layers → −49.5 % of those) | 755 084 | 1 387 (300 steps) | 6 532 | χ caps matrix rank at 32 |
 | raw-norm TT-matrix (`--format tt`, d=4) | 747 971 | 461 (100 steps) | 505 | einsum chain, 34× slower |
 | **whitened 2-site MPO (`--format wsvd`)** | **199** | **16.4–17.0** | **16 800–23 300** | activation-aware; two GEMMs |
 
