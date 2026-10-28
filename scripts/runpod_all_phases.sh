@@ -80,6 +80,10 @@ stage ql15_s30_ce   90m python phase4_llm/heal_finetune.py --model $M --target-s
     --steps $S --batch 8 --seq 512 --lr 1e-4 --out $OUT/ql15_s30_ce
 stage ql15_s15_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.15 \
     --steps $S --batch 8 --seq 512 --lr 1e-4 --distill --out $OUT/ql15_s15_kd
+stage ql15_s20_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.2 \
+    --steps $S --batch 8 --seq 512 --lr 1e-4 --distill --out $OUT/ql15_s20_kd
+stage ql15_tt_raw   60m python phase4_llm/heal_finetune.py --model $M --format tt --alloc greedy \
+    --target-saving 0.3 --steps $(( S / 15 )) --batch 8 --seq 512 --out $OUT/ql15_tt_raw
 stage ql15_mpo_old  45m python phase4_llm/heal_finetune.py --model $M --format mpo \
     --chi 32 --compress-frac 0.5 --steps $(( S / 5 )) --batch 8 --seq 512 \
     --targets q_proj,o_proj,gate_proj,up_proj --out $OUT/ql15_mpo_old

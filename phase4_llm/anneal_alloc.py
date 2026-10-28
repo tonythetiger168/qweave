@@ -145,6 +145,8 @@ def sqa(err, par, budget, lam=None, trotter=16, replicas=32, sweeps=400,
         if m < best_E:
             flat = Ef.argmin().item()
             best_E, best = m, ch[flat // P, flat % P].clone()
+    if best is None:                              # nothing feasible found
+        best = init.clone() if init is not None else ch[0, 0].clone()
     return best, best_E
 
 

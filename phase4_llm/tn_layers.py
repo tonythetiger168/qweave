@@ -298,3 +298,55 @@ def tt_rel_error(W: torch.Tensor, d: int, rank: int, eps: float = 0.0):
     Wh = tt_matrix_reconstruct(cores, om, im)[:W.shape[0], :W.shape[1]]
     err = torch.linalg.norm(W.float() - Wh) / (torch.linalg.norm(W.float()) + 1e-12)
     return float(err), mpo_num_params(cores)
+
+
+# ======================================================================
+# QL2b: activation-whitened 2-site MPO (the practical default)
+# ----------------------------------------------------------------------
+# Measured on Qwen3-0.6B: raw-norm TT-matrix compression of trained
+# weights at -30% params sends WikiText-2 PPL 21.7 -> 7.5e5 and the
+# einsum chain trains at 0.12 it/s. Trained weights are NOT low-
+# entanglement in the raw Frobenius norm -- but they are in the norm the
+# network actually sees, ||W X||. Whitening with the calibration Gram
+# matrix (SVD-LLM, arXiv 2403.07378):
+#     X X^T = S S^T,   W S = U Sigma V^T,   W ~ (U_r Sigma_r)(V_r^T S^-1)
+# makes the truncation error EXACTLY the singular-value tail in the
+# output norm. The result is a 2-site MPO (out-site, in-site, bond r):
+# two dense GEMMs, faster than the dense layer when r < in*out/(in+out).
+# ======================================================================
+class LowRankLinear(torch.nn.Module):
+    """y = (x B^T) A^T + b  -- 2-site MPO with bond dimension `rank`."""
+
+    def __init__(self, A: torch.Tensor, B: torch.Tensor,
+                 bias: Optional[torch.Tensor] = None):
+        super().__init__()
+        self.A = torch.nn.Parameter(A.contiguous())        # (out, r)
+        self.B = torch.nn.Parameter(B.contiguous())        # (r, in)
+        self.bias = torch.nn.Parameter(bias.clone()) if bias is not None else None
+        self.in_features, self.out_features = B.shape[1], A.shape[0]
+
+    @property
+    def rank(self) -> int:
+        return self.B.shape[0]
+
+    def forward(self, x):
+        y = torch.nn.functional.linear(torch.nn.functional.linear(x, self.B), self.A)
+        return y + self.bias if self.bias is not None else y
+
+
+def whitened_svd(W: torch.Tensor, gram: torch.Tensor, damp: float = 1e-4):
+    """Returns (U*Sigma, Sigma, V^T S^-1) of W S where gram = X X^T = S S^T.
+    Output-norm error at rank r is sqrt(sum_{i>=r} Sigma_i^2)."""
+    W = W.double()
+    G = gram.double()
+    G = G + damp * G.diagonal().mean() * torch.eye(G.shape[0], dtype=G.dtype,
+                                                   device=G.device)
+    S = torch.linalg.cholesky(G)                            # lower, G = S S^T
+    U, Sig, Vh = torch.linalg.svd(W @ S, full_matrices=False)
+    Bfull = torch.linalg.solve_triangular(S, Vh, upper=False, left=False)  # Vh S^-1
+    return U * Sig, Sig, Bfull
+
+
+def lowrank_from_svd(US, Bfull, rank, bias=None, dtype=torch.float32):
+    return LowRankLinear(US[:, :rank].to(dtype), Bfull[:rank].to(dtype),
+                         None if bias is None else bias.to(dtype))

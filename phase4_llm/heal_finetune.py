@@ -34,7 +34,8 @@ import torch
 import torch.nn.functional as F
 
 from phase4_llm.tn_layers import (MPOLinear, TTLinear, sensitivity_profile,
-                                  mpo_num_params, tt_rel_error)
+                                  mpo_num_params, tt_rel_error,
+                                  whitened_svd, lowrank_from_svd)
 from phase4_llm.anneal_alloc import allocate
 
 
@@ -71,11 +72,11 @@ def ppl_eval(model, tokenizer, device, max_sents=64, stride=1024, win=1024):
     return math.exp(nll_sum / max(n_tok, 1))
 
 
-def heal_data(tokenizer, n=512, seq=256):
+def heal_data(tokenizer, n=512, seq=256, seed=1):
     """n random windows of seq+1 tokens from WikiText-103 train
     (falls back to WikiText-2, then synthetic)."""
     text = None
-    for cfg, rows in (("wikitext-103-raw-v1", 200_000), ("wikitext-2-raw-v1", None)):
+    for cfg, rows in (("wikitext-103-raw-v1", 60_000), ("wikitext-2-raw-v1", None)):
         try:
             from datasets import load_dataset
             ds = load_dataset("Salesforce/wikitext", cfg, split="train")
@@ -88,10 +89,35 @@ def heal_data(tokenizer, n=512, seq=256):
             raise RuntimeError("WikiText unavailable -- refusing synthetic heal data")
         text = "quantum tensor networks compress large language models. " * 4000
     enc = tokenizer(text, return_tensors="pt").input_ids[0]
-    g = torch.Generator().manual_seed(1)
+    g = torch.Generator().manual_seed(seed)
     hi = max(enc.numel() - seq - 1, 1)
     starts = torch.randint(0, hi, (n,), generator=g).tolist()
     return [enc[j:j + seq + 1] for j in starts]
+
+
+@torch.no_grad()
+def calibrate(model, modules, tokenizer, device, n=128, seq=512):
+    """Input Gram matrices X X^T (in x in, float64) for each module,
+    from n windows of WikiText-103 train (disjoint seed from heal data)."""
+    grams = [None] * len(modules)
+
+    def hook(i):
+        def f(mod, inp, out):
+            x = inp[0].reshape(-1, inp[0].shape[-1]).double()
+            g = x.T @ x
+            grams[i] = g if grams[i] is None else grams[i] + g
+        return f
+
+    hs = [m.register_forward_hook(hook(i)) for i, m in enumerate(modules)]
+    rows = heal_data(tokenizer, n=n, seq=seq, seed=7)
+    was = model.training
+    model.eval()
+    for j in range(0, n, 8):
+        model(torch.stack(rows[j:j + 8]).to(device))
+    model.train(was)
+    for h in hs:
+        h.remove()
+    return grams
 
 
 def count_params(m):
@@ -111,14 +137,19 @@ def main():
     ap.add_argument('--batch', type=int, default=4)
     ap.add_argument('--out', default='/workspace/ql15')
     ap.add_argument('--smoke', action='store_true')
-    ap.add_argument('--format', choices=['tt', 'mpo'], default='tt')
+    ap.add_argument('--format', choices=['wsvd', 'tt', 'mpo'], default='wsvd',
+                    help='wsvd: activation-whitened 2-site MPO (default); '
+                         'tt: raw-norm TT-matrix; mpo: legacy row|col MPO')
+    ap.add_argument('--ratios', default='0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85',
+                    help='wsvd: kept-param fractions offered to the allocator')
+    ap.add_argument('--calib', type=int, default=128, help='calibration windows')
     ap.add_argument('--d', type=int, default=4, help='TT sites per layer')
     ap.add_argument('--ranks', default='16,32,64,128,256',
                     help='TT rank options for the allocator')
     ap.add_argument('--target-saving', type=float, default=0.3,
                     help='fraction of candidate-layer params to remove')
     ap.add_argument('--alloc', choices=['greedy', 'sa', 'sqa'], default='sqa')
-    ap.add_argument('--alloc-sweeps', type=int, default=300)
+    ap.add_argument('--alloc-sweeps', type=int, default=200)
     ap.add_argument('--targets',
                     default='q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj')
     ap.add_argument('--seq', type=int, default=512)
@@ -206,8 +237,40 @@ def main():
 
     plan = {}                                  # idx -> rank (tt) / True (mpo)
     alloc_report = None
-    if args.format == 'tt' and args.target_saving <= 0:
+    factors = {}
+    if args.format in ('tt', 'wsvd') and args.target_saving <= 0:
         print("[ql1.5] target-saving 0 -> dense reference run (no compression)")
+    elif args.format == 'wsvd':
+        t0 = time.time()
+        grams = calibrate(model, [m for _, m in candidates], tok, device,
+                          n=args.calib, seq=args.seq)
+        ratios = [float(r) for r in args.ratios.split(',')]
+        L, K = len(candidates), len(ratios) + 1
+        err = torch.zeros(L, K); par = torch.zeros(L, K)
+        for l, (_, m) in enumerate(candidates):
+            US, Sig, Bf = whitened_svd(m.weight.detach(), grams[l])
+            factors[l] = (US.float().cpu(), Bf.float().cpu())
+            tot = (Sig ** 2).sum()
+            tail = torch.flip(torch.cumsum(torch.flip(Sig ** 2, [0]), 0), [0])
+            o, i = m.weight.shape
+            for k, rt in enumerate(ratios):
+                r = max(1, int(rt * o * i / (o + i)))
+                err[l, k] = float(tail[r] / tot) if r < len(Sig) else 0.0
+                par[l, k] = r * (o + i)
+            err[l, -1], par[l, -1] = 0.0, o * i
+        del grams
+        budget = cand_params * (1 - args.target_saving)
+        alloc_report = allocate(err, par, budget, method=args.alloc,
+                                sweeps=args.alloc_sweeps)
+        choice = alloc_report[alloc_report['best']]['choice']
+        print(f"[ql2] whitened-SVD allocation ({time.time() - t0:.0f}s): "
+              + ", ".join(f"{k}: err={v['err']:.4f} params={v['params']:.3e}"
+                          for k, v in alloc_report.items() if k != 'best')
+              + f" -> {alloc_report['best']}")
+        for l, k in enumerate(choice):
+            if k < len(ratios):
+                o, i = candidates[l][1].weight.shape
+                plan[l] = max(1, int(ratios[k] * o * i / (o + i)))
     elif args.format == 'tt':
         ranks = [int(r) for r in args.ranks.split(',')]
         L, K = len(candidates), len(ranks) + 1           # last option = dense
@@ -250,7 +313,11 @@ def main():
     for idx, r in plan.items():
         name, mod = candidates[idx]
         with torch.no_grad():
-            if args.format == 'tt':
+            if args.format == 'wsvd':
+                US, Bf = factors[idx]
+                new = lowrank_from_svd(US.to(device), Bf.to(device), r,
+                                       bias=mod.bias).to(device)
+            elif args.format == 'tt':
                 new = TTLinear(mod.in_features, mod.out_features, d=args.d,
                                rank=r, eps=0.0, bias=mod.bias is not None,
                                weight=mod.weight.detach(), device=device,
@@ -263,7 +330,7 @@ def main():
                                    new.row_bits, new.col_bits)
                 for p, c in zip(new.cores, cs):
                     p.copy_(c)
-            if mod.bias is not None:
+            if mod.bias is not None and args.format != 'wsvd':
                 new.bias.copy_(mod.bias)
         assert _replace(model, mod, new), f"cannot replace {name}"
     print(f"[ql1.5] compressed {len(plan)}/{len(candidates)} layers")
@@ -325,6 +392,8 @@ def main():
     ppl1 = ppl_eval(model, tok, device)
 
     report = {'model': args.model, 'format': args.format, 'd': args.d,
+              'ratios': args.ratios if args.format == 'wsvd' else None,
+              'ranks_chosen': sorted(plan.values()) if args.format == 'wsvd' else None,
               'ranks': args.ranks, 'target_saving': args.target_saving,
               'chi': args.chi, 'eps': args.eps,
               'alloc': args.alloc, 'distill': args.distill,
@@ -349,6 +418,10 @@ def main():
     with open(f'{args.out}/ql15_report.json', 'w') as f:
         json.dump(report, f, indent=2)
     if args.save_model and not args.smoke:
+        if hasattr(model, 'disable_input_require_grads'):
+            model.disable_input_require_grads()      # drop unpicklable hook
+        if hasattr(model, 'gradient_checkpointing_disable'):
+            model.gradient_checkpointing_disable()
         torch.save(model, f'{args.out}/model.pt')
         tok.save_pretrained(f'{args.out}/tokenizer')
     print("\n[ql1.5] report:", json.dumps(report, indent=2))
