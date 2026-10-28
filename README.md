@@ -6,7 +6,7 @@ A complete quantum computing simulation platform with four simulators, three dev
 **Date:** September 2026  
 **Hardware Project:** [quantum-rd-plan](https://github.com/tonythetiger168/quantum-rd-plan)
 
-> **Implementation repository:** [qpu-sim-suite2](https://github.com/tonythetiger168/qpu-sim-suite2) — the full simulator codebase (state-vector / Clifford / MPS engines with gate fusion and Pauli-frame sampling, circuit IR + OpenQASM I/O, trajectory noise simulator, detector-error-model + PyMatching pipeline, IPEA, sparse VQE).
+> **Implementation repository:** [qpu-sim-suite2](https://github.com/tonythetiger168/qpu-sim-suite/tree/main/docs) — the full simulator codebase (state-vector / Clifford / MPS engines with gate fusion and Pauli-frame sampling, circuit IR + OpenQASM I/O, trajectory noise simulator, detector-error-model + PyMatching pipeline, IPEA, sparse VQE).
 
 ![Roadmap Demo](demo.gif)
 

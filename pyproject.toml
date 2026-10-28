@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qpu-sim-suite"
+version = "1.1.0"
+description = "QPU software simulation suite: state-vector, Clifford/stabilizer and MPS simulators, noise models, surface codes, and hybrid algorithms (VQE, QAOA, QPE/IPEA) with benchmarks"
+readme = "docs/README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "tony" }]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "qiskit-aer>=0.13",
+    "stim>=1.12",
+    "pymatching>=2.0",
+    "torch>=2.0",
+]
+all = ["qpu-sim-suite[dev]"]
+
+[project.scripts]
+qpu-sim-suite = "phase1_basic.cli:main"
+
+[project.urls]
+Repository = "https://github.com/tonythetiger168/qpu-sim-suite2"
+
+[tool.setuptools]
+packages = ["phase1_basic", "phase2_noise", "phase3_scale"]

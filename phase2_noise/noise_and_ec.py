@@ -75,12 +75,13 @@ class NoiseChannels:
         for i, a in enumerate(axes):
             inv_axes[a] = i
         tensor = np.transpose(tensor, inv_axes)
-        # Apply K^dagger to bra (second n axes)
+        # Apply K^dagger to bra (second n axes): move the bra axis of the
+        # target to the front, then contract with K^dagger on its LEFT index
         tensor = tensor.reshape([2]*n + [2]*n)
         axes = list(range(2*n))
-        axes[n], axes[n+target] = axes[n+target], axes[n]
+        axes[0], axes[n+target] = axes[n+target], axes[0]
         tensor = np.transpose(tensor, axes)
-        tensor = np.tensordot(K.conj().T, tensor, axes=([1], [0]))
+        tensor = np.tensordot(tensor, K.conj().T, axes=([0], [0]))
         inv_axes = [0]*(2*n)
         for i, a in enumerate(axes):
             inv_axes[a] = i
