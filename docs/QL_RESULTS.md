@@ -136,4 +136,35 @@ negative result: low-rank heads are not the ones that tolerate sparsity.
 
 ## 4. QL4 — open benchmark (dense vs compressed)
 
-(filled below from `ql4_report.json`)
+`phase4_llm/eval/run_eval.py`, lm-evaluation-harness, 500 examples per task
+(MMLU: 500 per subject cap), seed 0, bf16. ± = harness stderr. Compressed
+models are the FineWeb-Edu-healed KD runs from §1b (out-of-domain heal).
+
+| Metric | dense Qwen3-0.6B | −11 % params (s15) | −22 % params (s30) |
+|---|---|---|---|
+| params | 596.0 M | 529.9 M | 463.9 M |
+| ARC-easy (acc_norm) | 55.4 ± 2.2 | **55.0** ± 2.2 | 48.4 ± 2.2 |
+| ARC-challenge | 32.8 ± 2.1 | 29.0 ± 2.0 | 26.0 ± 2.0 |
+| HellaSwag | 47.6 ± 2.2 | **49.4** ± 2.2 | 46.2 ± 2.2 |
+| PIQA | 69.0 ± 2.1 | 65.8 ± 2.1 | 64.4 ± 2.1 |
+| WinoGrande | 55.8 ± 2.2 | **55.8** ± 2.2 | 54.6 ± 2.2 |
+| MMLU (57 subjects) | 41.3 ± 0.4 | 28.4 ± 0.4 | 22.9 ± 0.4 |
+| GSM8K (5-shot, strict) | 43.8 ± 2.2 | 9.8 ± 1.3 | 0.8 ± 0.4 |
+| WikiText-2 PPL, clean | 23.84 | 27.61 | 40.29 |
+| PPL, 5 % char noise | 124.7 | 159.1 | 226.5 |
+| PPL, 10 % char noise | 290.2 | 376.8 | 524.4 |
+| NLL gap noise 10 % (robustness) | 2.50 | 2.61 | 2.57 |
+| long-context PPL (8K windows) | 17.98 | 20.67 | 32.66 |
+| NLL by position 0–512 / 4096–8191 | 3.04 / 2.79 | 3.18 / 2.96 | 3.56 / 3.46 |
+
+**Reading.** At −11 % params, commonsense/reading tasks are within noise of
+dense (ARC-e, HellaSwag, WinoGrande), but **knowledge (MMLU −13 pt) and
+multi-step math (GSM8K −34 pt) collapse first** — PPL alone (+16 %) hides
+this. Robustness to input noise is unchanged (NLL gap 2.50 → 2.57–2.61);
+long-context drift is preserved at −11 % and flattens at −22 % (the
+compressed model gains less from longer context).
+
+This is the central evidence for the surpass plan: *any* "+10–20 % on
+MATH-500/GPQA" claim for a compressed small model needs public task
+numbers, because the cheap metric (PPL) and the expensive one (reasoning)
+move very differently.
