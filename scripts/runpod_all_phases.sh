@@ -75,13 +75,13 @@ stage ql2_bench     40m python phase4_llm/bench_ql2.py --out $OUT/ql2 $( [ "$Q" 
 stage ql15_dense    30m python phase4_llm/heal_finetune.py --model $M --target-saving 0 --heal-scope all \
     --steps $(( S / 10 )) --batch 8 --seq 512 --out $OUT/ql15_dense
 stage ql15_s30_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.3 \
-    --steps $S --batch 8 --seq 512 --lr 1e-4 --distill --save-model --out $OUT/ql15_s30_kd
+    --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --save-model --out $OUT/ql15_s30_kd
 stage ql15_s30_ce   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.3 \
-    --steps $S --batch 8 --seq 512 --lr 1e-4 --out $OUT/ql15_s30_ce
+    --steps $S --batch 8 --seq 512 --lr 2e-5 --out $OUT/ql15_s30_ce
 stage ql15_s15_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.15 \
-    --steps $S --batch 8 --seq 512 --lr 1e-4 --distill --out $OUT/ql15_s15_kd
+    --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --out $OUT/ql15_s15_kd
 stage ql15_s20_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.2 \
-    --steps $S --batch 8 --seq 512 --lr 1e-4 --distill --out $OUT/ql15_s20_kd
+    --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --out $OUT/ql15_s20_kd
 stage ql15_tt_raw   60m python phase4_llm/heal_finetune.py --model $M --format tt --alloc greedy \
     --target-saving 0.3 --steps $(( S / 15 )) --batch 8 --seq 512 --out $OUT/ql15_tt_raw
 stage ql15_mpo_old  45m python phase4_llm/heal_finetune.py --model $M --format mpo \
