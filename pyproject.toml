@@ -34,4 +34,4 @@ qweave = "phase1_basic.cli:main"
 Repository = "https://github.com/tonythetiger168/qweave"
 
 [tool.setuptools]
-packages = ["phase1_basic", "phase2_noise", "phase3_scale", "phase4_llm"]
+packages = ["phase1_basic", "phase2_noise", "phase3_scale", "phase4_llm", "phase4_llm.eval"]
