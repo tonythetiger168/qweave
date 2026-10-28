@@ -49,7 +49,7 @@ trap 'date -u > $OUT/DONE; python /workspace/push.py || true; sleep 30; stop_pod
 echo "=== $(date -u +%H:%M:%S) setup"
 nvidia-smi --query-gpu=name,memory.total --format=csv | tee $OUT/gpu.txt
 pip install -q "transformers>=4.56" datasets accelerate "lm_eval>=0.4.8" huggingface_hub \
-    scipy stim pymatching 2>&1 | tail -3
+    scipy stim pymatching qiskit qiskit-aer 2>&1 | tail -3
 python -c "import torch, transformers; print('torch', torch.__version__, 'tf', transformers.__version__)" \
     | tee $OUT/versions.txt
 cd /workspace && rm -rf qweave && git clone -q --depth 1 -b "${BRANCH:-main}" \

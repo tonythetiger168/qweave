@@ -28,7 +28,8 @@ RunPod quick start (see docs/QL1.5_RUNPOD.md):
       --chi 32 --eps 1e-3 --steps 300 --out /workspace/ql15
 """
 
-import argparse, json, math, time
+import argparse, json, math, os, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import torch
 import torch.nn.functional as F
 
