@@ -38,14 +38,19 @@ from phase4_llm.tn_layers import (MPOLinear, TTLinear, sensitivity_profile,
 from phase4_llm.anneal_alloc import allocate
 
 
+ALLOW_SYNTHETIC = False      # only --smoke may fall back to synthetic text
+
+
 # ----------------------------------------------------------------------
 def ppl_eval(model, tokenizer, device, max_sents=64, stride=1024, win=1024):
     """WikiText-2 test perplexity (non-overlapping windows)."""
     try:
         from datasets import load_dataset
-        ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
         text = "\n\n".join(ds["text"][:max_sents * 4])
     except Exception:
+        if not ALLOW_SYNTHETIC:
+            raise
         print("  [warn] wikitext unavailable, using synthetic text")
         text = "the quick brown fox jumps over the lazy dog. " * 4000
     enc = tokenizer(text, return_tensors="pt").input_ids[0].to(device)
@@ -73,12 +78,14 @@ def heal_data(tokenizer, n=512, seq=256):
     for cfg, rows in (("wikitext-103-raw-v1", 200_000), ("wikitext-2-raw-v1", None)):
         try:
             from datasets import load_dataset
-            ds = load_dataset("wikitext", cfg, split="train")
+            ds = load_dataset("Salesforce/wikitext", cfg, split="train")
             text = "\n\n".join(ds["text"][:rows] if rows else ds["text"])
             break
         except Exception:
             continue
     if text is None:
+        if not ALLOW_SYNTHETIC:
+            raise RuntimeError("WikiText unavailable -- refusing synthetic heal data")
         text = "quantum tensor networks compress large language models. " * 4000
     enc = tokenizer(text, return_tensors="pt").input_ids[0]
     g = torch.Generator().manual_seed(1)
@@ -161,6 +168,8 @@ def main():
         model = Tiny().to(device)
         tok = lambda text, return_tensors="pt": type(
             'T', (), {'input_ids': torch.randint(0, 2000, (1, 512))})()
+        global ALLOW_SYNTHETIC
+        ALLOW_SYNTHETIC = True
         print("[ql1.5] smoke: tiny random GPT (no downloads)")
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer

@@ -90,77 +90,91 @@ def anneal(err, par, budget, lam=None, replicas=256, sweeps=400,
 def sqa(err, par, budget, lam=None, trotter=16, replicas=32, sweeps=400,
         T=None, gamma0=None, gamma1=1e-3, seed=0, init=None):
     """Path-integral simulated quantum annealing (Potts generalization).
-    State: (replicas, trotter, L). Each slice sees E/P; neighbouring
-    slices are coupled with J_perp * [x_k != x_{k+1}]."""
+    State: (replicas, trotter, L). Slice k sees E/P at temperature T;
+    neighbouring slices are coupled with J_perp * [x_k != x_{k+1}].
+    Each sweep proposes one move per (replica, slice) L times, updating
+    even then odd slices (checkerboard) so neighbours are held fixed."""
     g = torch.Generator(device=err.device).manual_seed(seed)
     L, K = err.shape
     P = trotter
+    dev = err.device
     lam = lam if lam is not None else 10.0 * float(err.max())
-    T = T or 0.05 * (float(err.std()) + 1e-6)
-    gamma0 = gamma0 or 3.0 * float(err.std() + 1e-6)
-    ch = torch.randint(0, K, (replicas, P, L), generator=g, device=err.device)
+    T = T or 0.05 * (float(err.std()) + 1e-6) / P      # P*T = classical temp
+    gamma0 = gamma0 or 2.0 * (float(err.std()) + 1e-6)
+    ch = torch.randint(0, K, (replicas, P, L), generator=g, device=dev)
     if init is not None:
         ch[0, :] = init
-    idx = torch.arange(L, device=err.device)
+    idx = torch.arange(L, device=dev)
 
-    def slice_E(c):
+    def slice_E(c):                                       # (..., L) -> (...)
         e = err[idx, c].sum(-1)
         p = par[idx, c].sum(-1)
         return e + lam * torch.relu(p - budget) / budget
 
+    E = slice_E(ch)                                       # (R, P)
     best_E, best = float('inf'), None
-    R = torch.arange(replicas, device=err.device)
+    ar_r = torch.arange(replicas, device=dev)[:, None]
+    ar_p = torch.arange(P, device=dev)[None, :]
+    parity = (torch.arange(P, device=dev) % 2)[None, :]
     for s in range(sweeps):
         gam = gamma0 * (gamma1 / gamma0) ** (s / max(sweeps - 1, 1))
         Jp = -0.5 * T * math.log(math.tanh(gam / (P * T)) + 1e-300)
         for _ in range(L):
-            kslice = torch.randint(0, P, (replicas,), generator=g, device=err.device)
-            l = torch.randint(0, L, (replicas,), generator=g, device=err.device)
-            v = torch.randint(0, K, (replicas,), generator=g, device=err.device)
-            cur = ch[R, kslice]                                  # (R, L)
-            new = cur.clone(); new[R, l] = v
-            dE = (slice_E(new) - slice_E(cur)) / P
-            up, dn = ch[R, (kslice + 1) % P, l], ch[R, (kslice - 1) % P, l]
-            old_v = cur[R, l]
-            dJ = Jp * (((v != up).float() + (v != dn).float()) -
-                       ((old_v != up).float() + (old_v != dn).float()))
-            acc = torch.rand(replicas, generator=g, device=err.device) < \
-                torch.exp(-(dE + dJ).clamp(min=0) / T)
-            ch[R[acc], kslice[acc]] = new[acc]
-        Es = slice_E(ch.reshape(-1, L))
-        m = Es.min().item()
+            for half in (0, 1):
+                l = torch.randint(0, L, (replicas, P), generator=g, device=dev)
+                v = torch.randint(0, K, (replicas, P), generator=g, device=dev)
+                old = ch[ar_r, ar_p, l]
+                new = ch.clone()
+                new[ar_r, ar_p, l] = v
+                En = slice_E(new)
+                up = ch[ar_r, (ar_p + 1) % P, l]
+                dn = ch[ar_r, (ar_p - 1) % P, l]
+                dJ = Jp * ((v != up).float() + (v != dn).float()
+                           - (old != up).float() - (old != dn).float())
+                dE = (En - E) / P + dJ
+                acc = (torch.rand(replicas, P, generator=g, device=dev) <
+                       torch.exp(-dE.clamp(min=0) / T)) & (parity == half)
+                ch = torch.where(acc[..., None], new, ch)
+                E = torch.where(acc, En, E)
+        m = E.min().item()
         if m < best_E:
-            best_E, best = m, ch.reshape(-1, L)[Es.argmin()].clone()
+            flat = E.argmin().item()
+            best_E, best = m, ch[flat // P, flat % P].clone()
     return best, best_E
 
 
-def exact_dp(err, par, budget, bins=2000) -> torch.Tensor:
-    """Multiple-choice knapsack DP on a discretized budget (gap reference)."""
+def exact_dp(err, par, budget, bins=100_000, lower_bound=False) -> torch.Tensor:
+    """Multiple-choice knapsack DP on a discretized budget (numpy-vectorized).
+    Costs are rounded UP (feasible, near-exact for fine bins); with
+    lower_bound=True they are rounded DOWN, giving a relaxation whose
+    error is a lower bound on the true optimum."""
+    import numpy as np
     L, K = err.shape
     unit = budget / bins
-    w = torch.ceil(par / unit).long().tolist()
-    e = err.tolist()
-    INF = float('inf')
-    dp = [0.0] + [INF] * bins          # dp[b] = min err using exactly <= b
-    back = []
+    w = par.cpu().double().numpy() / unit
+    w = (np.floor(w) if lower_bound else np.ceil(w)).astype(np.int64)
+    e = err.cpu().double().numpy()
+    INF = np.inf
+    dp = np.full(bins + 1, INF); dp[0] = 0.0
+    back = np.zeros((L, bins + 1), dtype=np.int16)
     for l in range(L):
-        nd = [INF] * (bins + 1)
-        bk = [-1] * (bins + 1)
-        for b in range(bins + 1):
-            if dp[b] == INF:
+        nd = np.full(bins + 1, INF)
+        for k in range(K):
+            wk = w[l, k]
+            if wk > bins:
                 continue
-            for k in range(K):
-                nb = b + w[l][k]
-                if nb <= bins and dp[b] + e[l][k] < nd[nb]:
-                    nd[nb], bk[nb] = dp[b] + e[l][k], (b, k)
+            cand = np.full(bins + 1, INF)
+            cand[wk:] = dp[:bins + 1 - wk] + e[l, k]
+            better = cand < nd
+            nd[better] = cand[better]
+            back[l, better] = k
         dp = nd
-        back.append(bk)
-    b = min(range(bins + 1), key=lambda i: dp[i])
+    b = int(np.argmin(dp))
     ch = [0] * L
     for l in range(L - 1, -1, -1):
-        pb, k = back[l][b]
+        k = int(back[l, b])
         ch[l] = k
-        b = pb
+        b -= w[l, k]
     return torch.tensor(ch, device=err.device)
 
 

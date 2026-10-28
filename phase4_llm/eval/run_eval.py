@@ -77,7 +77,7 @@ def window_nll(model, ids, win, device, buckets=None):
 def robustness(model, tok, device, drift_len=8192, seed=0):
     from datasets import load_dataset
     out = {}
-    test = "\n\n".join(load_dataset("wikitext", "wikitext-2-raw-v1",
+    test = "\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1",
                                     split="test")["text"])[:300_000]
     clean = None
     for rate in (0.0, 0.05, 0.10):
@@ -89,7 +89,7 @@ def robustness(model, tok, device, drift_len=8192, seed=0):
             clean = nll
         else:
             out[f'nll_gap_noise_{int(rate * 100)}'] = round(nll - clean, 4)
-    long = "\n\n".join(load_dataset("wikitext", "wikitext-103-raw-v1",
+    long = "\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1",
                                     split="test")["text"])
     ids = tok(long, return_tensors="pt").input_ids[0][:drift_len * 6 + 1]
     edges = [0, 512, 2048, 4096, drift_len - 1]

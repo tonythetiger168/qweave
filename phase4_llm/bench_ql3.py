@@ -28,7 +28,7 @@ def diag(model_id, dev, ntok=2048):
     tok = AutoTokenizer.from_pretrained(model_id)
     m = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32,
                                              attn_implementation="eager").to(dev).eval()
-    text = "\n\n".join(load_dataset("wikitext", "wikitext-103-raw-v1",
+    text = "\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1",
                                     split="test")["text"][:3000])
     ids = tok(text, return_tensors="pt").input_ids[:, :ntok].to(dev)
     with torch.no_grad():
@@ -83,7 +83,7 @@ def long_ppl(model_id, dev, win, nwin, mode, per_layer_topk=None, topk=8):
         model_id, torch_dtype=torch.bfloat16,
         attn_implementation="sdpa" if mode == 'dense' else "qsa").to(dev).eval()
     Q.QSA_CFG.update(topk=topk, per_layer_topk=per_layer_topk)
-    text = "\n\n".join(load_dataset("wikitext", "wikitext-103-raw-v1",
+    text = "\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1",
                                     split="test")["text"])
     ids = tok(text, return_tensors="pt").input_ids[0]
     tot, n = 0.0, 0

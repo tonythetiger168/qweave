@@ -97,17 +97,18 @@ def bench_alloc(dev, quick):
         res = {'seed': seed, 'layers': L}
         t = time.time(); c = greedy(err, par, budget)
         res['greedy'] = (float(energy(c, err, par, budget, 1.0)[1]), time.time() - t)
-        sw = 100 if quick else 400
+        sw = 100 if quick else 300
         t = time.time(); c, _ = anneal(err, par, budget, sweeps=sw, seed=seed)
         e, _, p = energy(c, err, par, budget, 1.0)
         res['sa'] = (float(e) if p <= budget else None, time.time() - t)
         t = time.time(); c, _ = sqa(err, par, budget, sweeps=sw, seed=seed)
         e, _, p = energy(c, err, par, budget, 1.0)
         res['sqa'] = (float(e) if p <= budget else None, time.time() - t)
-        t = time.time(); c = exact_dp(err.cpu(), par.cpu(), budget,
-                                      bins=500 if quick else 3000)
+        t = time.time(); c = exact_dp(err, par, budget)
         res['exact_dp'] = (float(energy(c.to(dev), err, par, budget, 1.0)[1]),
                            time.time() - t)
+        c = exact_dp(err, par, budget, lower_bound=True)
+        res['lower_bound'] = float(energy(c.to(dev), err, par, budget, 1.0)[1])
         best = res['exact_dp'][0]
         for k in ('greedy', 'sa', 'sqa'):
             v = res[k][0]
