@@ -33,8 +33,9 @@ api.upload_folder(folder_path="/workspace/qweave_runs", repo_id=repo, repo_type=
 print("pushed ->", repo, flush=True)
 PY
 
-stage() {   # stage <name> <timeout> <cmd...>
+stage() {   # stage <name> <timeout> <cmd...>   (ONLY="a b c" runs a subset)
   local name=$1 to=$2; shift 2
+  if [ -n "${ONLY:-}" ] && ! [[ " $ONLY " == *" $name "* ]]; then return; fi
   echo "=== $(date -u +%H:%M:%S) [$name] $*"
   local t=$(date +%s)
   timeout "$to" "$@" > "$OUT/$name.log" 2>&1
@@ -70,16 +71,19 @@ stage ql15_smoke    20m python phase4_llm/heal_finetune.py --smoke --steps 30 --
 
 # ---- QL2: kernels + allocator ----
 stage ql2_bench     40m python phase4_llm/bench_ql2.py --out $OUT/ql2 $( [ "$Q" = 1 ] && echo --quick )
+stage ql2_layers    20m python phase4_llm/bench_ql2.py --layers-only --out $OUT/ql2_layers
 
 # ---- QL1.5: heal runs on Qwen3-0.6B ----
 stage ql15_dense    30m python phase4_llm/heal_finetune.py --model $M --target-saving 0 --heal-scope all \
     --steps $(( S / 10 )) --batch 8 --seq 512 --out $OUT/ql15_dense
 stage ql15_s30_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.3 \
     --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --save-model --out $OUT/ql15_s30_kd
+stage ql15_dense_ft 60m python phase4_llm/heal_finetune.py --model $M --target-saving 0 --heal-scope all \
+    --steps $S --batch 8 --seq 512 --lr 2e-5 --out $OUT/ql15_dense_ft
 stage ql15_s30_ce   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.3 \
     --steps $S --batch 8 --seq 512 --lr 2e-5 --out $OUT/ql15_s30_ce
 stage ql15_s15_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.15 \
-    --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --out $OUT/ql15_s15_kd
+    --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --save-model --out $OUT/ql15_s15_kd
 stage ql15_s20_kd   90m python phase4_llm/heal_finetune.py --model $M --target-saving 0.2 \
     --steps $S --batch 8 --seq 512 --lr 2e-5 --distill --out $OUT/ql15_s20_kd
 stage ql15_tt_raw   60m python phase4_llm/heal_finetune.py --model $M --format tt --alloc greedy \
@@ -94,6 +98,8 @@ stage ql3_bench     90m python phase4_llm/bench_ql3.py --model $M --win $W --nwi
 # ---- QL4: open benchmark ----
 stage ql4_eval     150m python phase4_llm/eval/run_eval.py --dense $M \
     --compressed $OUT/ql15_s30_kd/model.pt --limit $LIM --out $OUT/ql4
+stage ql4_eval_s15 120m python phase4_llm/eval/run_eval.py --skip-dense \
+    --compressed $OUT/ql15_s15_kd/model.pt --limit $LIM --out $OUT/ql4_s15
 
 echo "=== $(date -u +%H:%M:%S) all stages finished"
 cat $OUT/STAGES

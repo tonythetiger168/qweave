@@ -72,21 +72,35 @@ def ppl_eval(model, tokenizer, device, max_sents=64, stride=1024, win=1024):
     return math.exp(nll_sum / max(n_tok, 1))
 
 
+HEAL_SOURCE = 'fineweb'      # set from --heal-data
+
+
+def _heal_text(min_chars):
+    """General-domain heal text: FineWeb-Edu (default) so WikiText-2 PPL
+    stays an OUT-of-domain test. --heal-data wikitext reproduces the
+    earlier in-domain runs (which flatter PPL: a dense model fine-tuned
+    150 steps on WikiText-103 drops 21.7 -> 13.7)."""
+    from datasets import load_dataset
+    if HEAL_SOURCE == 'fineweb':
+        ds = load_dataset("HuggingFaceFW/fineweb-edu", "sample-10BT",
+                          split="train", streaming=True)
+        parts, n = [], 0
+        for row in ds:
+            parts.append(row["text"]); n += len(row["text"])
+            if n >= min_chars:
+                break
+        return "\n\n".join(parts)
+    ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1", split="train")
+    return "\n\n".join(ds["text"][:60_000])
+
+
 def heal_data(tokenizer, n=512, seq=256, seed=1):
-    """n random windows of seq+1 tokens from WikiText-103 train
-    (falls back to WikiText-2, then synthetic)."""
-    text = None
-    for cfg, rows in (("wikitext-103-raw-v1", 60_000), ("wikitext-2-raw-v1", None)):
-        try:
-            from datasets import load_dataset
-            ds = load_dataset("Salesforce/wikitext", cfg, split="train")
-            text = "\n\n".join(ds["text"][:rows] if rows else ds["text"])
-            break
-        except Exception:
-            continue
-    if text is None:
+    """n random windows of seq+1 tokens from the heal corpus."""
+    try:
+        text = _heal_text(min_chars=max(n * (seq + 1) * 5, 2_000_000))
+    except Exception:
         if not ALLOW_SYNTHETIC:
-            raise RuntimeError("WikiText unavailable -- refusing synthetic heal data")
+            raise
         text = "quantum tensor networks compress large language models. " * 4000
     enc = tokenizer(text, return_tensors="pt").input_ids[0]
     g = torch.Generator().manual_seed(seed)
@@ -159,7 +173,10 @@ def main():
     ap.add_argument('--heal-scope', choices=['all', 'tn'], default='tn')
     ap.add_argument('--gate', type=float, default=3.0)
     ap.add_argument('--save-model', action='store_true')
+    ap.add_argument('--heal-data', choices=['fineweb', 'wikitext'], default='fineweb')
     args = ap.parse_args()
+    global HEAL_SOURCE
+    HEAL_SOURCE = args.heal_data
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     dtype = torch.bfloat16 if device == 'cuda' else torch.float32  # autocast
@@ -398,6 +415,7 @@ def main():
               'ranks': args.ranks, 'target_saving': args.target_saving,
               'chi': args.chi, 'eps': args.eps,
               'alloc': args.alloc, 'distill': args.distill,
+              'heal_data': args.heal_data, 'heal_scope': args.heal_scope, 'lr': args.lr,
               'steps': args.steps, 'batch': args.batch, 'seq': args.seq,
               'compressed_layers': len(plan), 'candidate_layers': len(candidates),
               'params_total_before': dense_before, 'params_total_after': dense_after,

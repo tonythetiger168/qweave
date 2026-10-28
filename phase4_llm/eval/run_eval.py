@@ -131,12 +131,13 @@ def main():
     ap.add_argument('--limit', type=float, default=500)
     ap.add_argument('--batch', default='16')
     ap.add_argument('--skip-lm-eval', action='store_true')
+    ap.add_argument('--skip-dense', action='store_true')
     ap.add_argument('--out', default='/workspace/ql4')
     args = ap.parse_args()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     os.makedirs(args.out, exist_ok=True)
-    specs = [('dense', args.dense)] + ([('compressed', args.compressed)]
-                                       if args.compressed else [])
+    specs = ([] if args.skip_dense else [('dense', args.dense)]) + \
+        ([('compressed', args.compressed)] if args.compressed else [])
     allres = {}
     for name, spec in specs:
         t0 = time.time()
@@ -161,10 +162,11 @@ def main():
              "|---|" + "---|" * len(allres)]
     keys = ['params']
     rows = {k: [str(v[k]) for v in allres.values()] for k in keys}
-    for k in allres['dense']['robustness']:
+    ref = next(iter(allres.values()))
+    for k in ref['robustness']:
         if k != 'nll_by_position':
             rows[k] = [str(v['robustness'].get(k)) for v in allres.values()]
-    for k in allres['dense'].get('tasks', {}):
+    for k in ref.get('tasks', {}):
         if not k.endswith(('_metric', '_stderr')):
             rows[k] = [str(v.get('tasks', {}).get(k)) for v in allres.values()]
     lines += [f"| {k} | " + " | ".join(v) + " |" for k, v in rows.items()]
