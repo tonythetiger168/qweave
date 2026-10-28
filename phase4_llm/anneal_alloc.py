@@ -67,7 +67,7 @@ def anneal(err, par, budget, lam=None, replicas=256, sweeps=400,
     if init is not None:
         ch[0] = init
     E, _, _ = energy(ch, err, par, budget, lam)
-    best_E, best = E.min().item(), ch[E.argmin()].clone()
+    best_E, best = float('inf'), ch[0].clone()
     rr = torch.arange(replicas, device=err.device)
     for s in range(sweeps):
         T = t0 * (t1 / t0) ** (s / max(sweeps - 1, 1))
@@ -81,9 +81,11 @@ def anneal(err, par, budget, lam=None, replicas=256, sweeps=400,
                 torch.exp(-(En - E).clamp(min=0) / T)
             ch = torch.where(acc[:, None], new, ch)
             E = torch.where(acc, En, E)
-        m = E.min().item()
+        _, e, p = energy(ch, err, par, budget, lam)
+        Ef = torch.where(p <= budget, e, torch.full_like(e, float('inf')))
+        m = Ef.min().item()                       # best FEASIBLE state only
         if m < best_E:
-            best_E, best = m, ch[E.argmin()].clone()
+            best_E, best = m, ch[Ef.argmin()].clone()
     return best, best_E
 
 
@@ -136,9 +138,12 @@ def sqa(err, par, budget, lam=None, trotter=16, replicas=32, sweeps=400,
                        torch.exp(-dE.clamp(min=0) / T)) & (parity == half)
                 ch = torch.where(acc[..., None], new, ch)
                 E = torch.where(acc, En, E)
-        m = E.min().item()
+        e = err[idx, ch].sum(-1)
+        Ef = torch.where(par[idx, ch].sum(-1) <= budget, e,
+                         torch.full_like(e, float('inf')))
+        m = Ef.min().item()                       # best FEASIBLE state only
         if m < best_E:
-            flat = E.argmin().item()
+            flat = Ef.argmin().item()
             best_E, best = m, ch[flat // P, flat % P].clone()
     return best, best_E
 
