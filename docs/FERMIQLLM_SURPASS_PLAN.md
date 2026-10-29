@@ -46,7 +46,10 @@ FermiQLLM 1.0 的五個「量子增強」環節只有公司內測數字。qweave
 - **實作（2026-10-29）**：`phase4_llm/ql5_compress.py`（Fisher 加權秩分配、知識/推理校準混合 +
   13-gram 去污染、詞頻 × 隱狀態加權的嵌入/LM head 低秩、規範固定、INT8/FP8、分塊 KD 多 GPU heal），
   `ql5_gate.py`（全測試集 paired bootstrap 信賴區間）。指令與成本（實估 US$130–200）見
-  [QL5_RUN_PLAN.md](QL5_RUN_PLAN.md)。尚無 GPU 實測數字。
+  [QL5_RUN_PLAN.md](QL5_RUN_PLAN.md)。
+- **Stage A 實測（2026-10-29，0.6B-Base）：未過門檻**。−20% 參數：MMLU −8.65pt、GSM8K −7.88pt
+  （QL1.5 在 −11% 時為 −13 / −34）；同配方 dense 對照 MMLU +0.35、GSM8K +3.94。詳見
+  [QL5_RESULTS.md](QL5_RESULTS.md)。
 
 ### QL6 — 真的變快（修 F6，放大 F7）
 - 秩一律對齊 64/128（已實作 `--rank-align`），融合 `x·Bᵀ·Aᵀ` 為單一 Triton kernel。
