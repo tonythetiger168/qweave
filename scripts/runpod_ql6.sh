@@ -10,6 +10,11 @@
 #            8K/16K/32K; vLLM dense reference in its own venv.
 #   STAGE=Q  same measurements on QL5's real models (needs QL5_DIR, i.e. run on
 #            the QL5 pod after its stage A, ~1 h extra)
+#   STAGE=K  Triton low-rank decode kernels (ql6_kernels.py) after stage S
+#            showed torch low rank slower than dense: per-layer latency
+#            microbench, 0.6B + 4B decode with/without kernels (CUDA graphs
+#            only), 4B speculative rerun with the bf16-aware lossless check,
+#            vLLM references (~2-2.5 h, ~US$8-10)
 #   QUICK=1  minutes-long version (checks the pod, ~US$1)
 #
 # Env:  HF_TOKEN (RunPod secret) -> reports pushed to <hf-user>/qweave-runs
@@ -92,7 +97,16 @@ else
   COMMON="--n-prompts 24 --new-tokens 256 --repeats 2"; PF=8192,16384,32768; HEAL=20e6
 fi
 
-if [ "$STAGE" = S ]; then
+if [ "$STAGE" = K ]; then
+  KC=$([ "$Q" = 1 ] && echo "$COMMON" || echo "--n-prompts 12 --new-tokens 256 --repeats 1")
+  step K0_draft06 python phase4_llm/ql5_compress.py --model $M06 --total-saving 0.2 \
+      --embed-keep 0.5 --heal-tokens $HEAL --batch 16 --save-model --out $OUT/draft06
+  step K1_06 python $D --model $M06 $KC --synthetic-keep 0.9,0.6 --embed-keep 0.5 \
+      --engines compiled --triton --layer-bench --prefill "" --out $OUT/k06
+  step K2_4b python $D --model $M4 $KC --synthetic-keep 0.9,0.6 --embed-keep 0.5 \
+      --engines compiled --triton --layer-bench --prefill "" \
+      --drafts $M06,$OUT/draft06/model.pt --gamma 3,5 --out $OUT/k4b
+elif [ "$STAGE" = S ]; then
   # A QL-compressed 0.6B to use as a REAL draft for 4B (quality matters for
   # acceptance only, so a short 20M-token heal is enough; ~20 min).
   step S0_draft06 python phase4_llm/ql5_compress.py --model $M06 --total-saving 0.2 \

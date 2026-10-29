@@ -194,6 +194,43 @@ step of the target's argmax under teacher forcing. The gate now uses
 gap of each emitted token, compared with plain greedy's own gaps. The 4B rows
 above need a rerun to get those numbers.
 
+## Stage K: Triton low-rank decode kernels (code ready, not run)
+
+Stage S showed the problem is not bytes but kernels. Dense 0.6B under CUDA
+graphs ran at 3.3 ms/token, about 11 % of the H100 byte floor (~0.36 ms), so
+decode time tracks the number of kernels, and torch low rank doubles the
+GEMMs per Linear. Its skinny GEMVs (r = 384-704 outputs) also occupy only a
+few dozen of the 132 SMs.
+
+`phase4_llm/ql6_kernels.py` (M <= 16 rows: decode and speculative verify):
+
+| kernel | does | why |
+|---|---|---|
+| `lowrank_b` | t-partials = x·Bᵀ, split along K | ~4x more programs; partials are summed by the next kernel while it loads t, so no atomics and no memset kernel |
+| `lowrank_a` | y = A·t (+ bias) | |
+| `lowrank_a_glu` | h = silu(A_g·t_g) * (A_u·t_u) | gate/up's two A factors and SwiGLU in one kernel |
+
+Kernels per MLP: torch low rank 6, these 4, dense (fused gate/up) 3. Per
+attention Linear: 2 vs dense 1. So expect a gain on 4B (bandwidth is ~36 % of
+its time) and little on 0.6B. `use_triton_(model)` switches a model over;
+more than 16 rows falls back to torch. Tested on CPU with the Triton
+interpreter (validate_ql6 [10]): matches torch to 1e-6, greedy and
+speculative outputs unchanged. Not yet run on a GPU, including under
+`torch.compile`.
+
+```bash
+curl -sL https://raw.githubusercontent.com/tonythetiger168/qweave/claude/ql6-decode/scripts/runpod_ql6.sh \
+  | STAGE=K bash        # 1x H100, ~2-2.5 h, ~US$8-10 (QUICK=1 first: ~US$1)
+```
+
+It runs a per-layer latency microbench (dense vs torch vs Triton low rank, M = 1
+and 6), 0.6B and 4B decode with and without the kernels (CUDA graphs only), the
+4B speculative rows again with the bf16-aware lossless check (drafts Qwen3-0.6B
+and a QL-compressed 0.6B on the kernel path), and the vLLM references that
+stage S did not reach. Decision rule: if the Triton rows do not beat dense on
+4B, low-rank decode speed is closed as a negative result and QL6 rests on
+speculative decoding.
+
 ## Honest expectations (written before the run)
 
 - L1 at the QL5 plan: expect about 1.1–1.15× with CUDA graphs. That would tie

@@ -825,6 +825,11 @@ def main():
     ap.add_argument('--repeats', type=int, default=2)
     ap.add_argument('--no-fuse', action='store_true')
     ap.add_argument('--int8', action='store_true', help='also time torchao INT8 variants')
+    ap.add_argument('--triton', action='store_true',
+                    help='also time low-rank variants on the ql6_kernels Triton path '
+                         '(and use it for .pt drafts)')
+    ap.add_argument('--layer-bench', action='store_true',
+                    help='per-layer decode latency: dense vs torch vs Triton low rank (CUDA)')
     ap.add_argument('--prefill', default='8192,16384,32768')
     ap.add_argument('--qsa-topk', type=int, default=16)
     args = ap.parse_args()
@@ -892,19 +897,36 @@ def main():
                                      'params': sum(p.numel() for p in m.parameters()),
                                      'audit': rank_audit(m, args.rank_align)}
         del m
+    from phase4_llm.ql6_kernels import available as _tri_available, use_triton_, bench_layers
+    tri_ok = _tri_available(torch.zeros(1, device=dev))
+    if args.layer_bench and dev.type == 'cuda':
+        c = load_base().config
+        hd = getattr(c, 'head_dim', None) or c.hidden_size // c.num_attention_heads
+        H, I = c.hidden_size, c.intermediate_size
+        shapes = [(H, c.num_attention_heads * hd, 'q_proj'), (H, c.num_key_value_heads * hd, 'k_proj'),
+                  (c.num_attention_heads * hd, H, 'o_proj'), (H, I, 'up_proj'), (I, H, 'down_proj')]
+        report['layers'] = bench_layers(shapes, keeps=(0.9, 0.6), M=1) + \
+            bench_layers(shapes[3:4], keeps=(0.9,), M=6)            # speculative verify size
     for engine in args.engines.split(','):
         times = {}
         for vname, mk, meta in variants:
             for fuse in ([False] if args.no_fuse else [False, True]):
-                for q8 in ([False, True] if args.int8 and dev.type == 'cuda' and engine == 'compiled'
-                           else [False]):
-                    key = vname + ('+fuse' if fuse else '') + ('+int8' if q8 else '')
+                extras = ['']
+                if args.int8 and dev.type == 'cuda' and engine == 'compiled':
+                    extras.append('int8')
+                if args.triton and fuse and vname != 'dense' and tri_ok:
+                    extras.append('triton')
+                for ex in extras:
+                    q8, tri = ex == 'int8', ex == 'triton'
+                    key = vname + ('+fuse' if fuse else '') + ('+' + ex if ex else '')
                     try:
                         m = mk()
                         if fuse:
                             fuse_siblings_(m)
                         if q8:
                             as_linear_pairs_(m); _int8(m)
+                        if tri:
+                            meta = {**meta, 'triton': use_triton_(m)}
                         gen = make_engine(m, engine, max_len)
                         times[key] = time_decode(gen, prompts, args.new_tokens, dev, args.repeats)
                         row = {'variant': key, 'engine': engine, **meta,
@@ -944,6 +966,8 @@ def main():
                             p.add_(0.05 * p.std() * torch.randn_like(p))
             else:
                 dm = _load(d, dev, dtype)
+                if args.triton and d.endswith('.pt') and tri_ok:
+                    fuse_siblings_(dm); use_triton_(dm)
             for engine in l2_engines:
                 try:
                     greedy_fn, spec_fn, dgreedy = spec_engine(

@@ -18,6 +18,8 @@ Checks
   8. paired bootstrap speedup CI and gate logic (lossy needs QL5 PASS,
      lossless needs agreement, INT8 judged vs matched dense)
   9. end-to-end ql6_decode.py --smoke writes a report with all sections
+ 10. Triton low-rank decode kernels (interpreter): match torch, model
+     outputs and greedy / speculative decoding unchanged
 """
 
 import json, os, subprocess, sys, tempfile
@@ -239,6 +241,23 @@ check("lossless 1.35x [1.25, 1.45] -> PASS point, FAIL at CI bound",
       g['decode_PASS'] and not g['decode_PASS_at_CI_bound'])
 rep['prefill'] = [{'tokens': 32768, 'speedup': 2.3}]
 check("prefill 32K 2.3x -> PASS", q6.gate(rep)['prefill_PASS'])
+
+section("[10] Triton decode kernels (TRITON_INTERPRET=1, CPU)")
+try:
+    import triton  # noqa: F401
+    r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                     '_ql6_triton_check.py')],
+                       capture_output=True, text=True, timeout=900,
+                       env={**os.environ, 'TRITON_INTERPRET': '1'})
+    lines = [l for l in r.stdout.splitlines() if l.startswith('CHECK ')]
+    for l in lines:
+        _, res, rest = l.split(' ', 2)
+        check(rest, res == 'PASS')
+    if r.returncode != 0 or not lines:
+        print(r.stdout[-2000:], r.stderr[-2000:])
+        check("triton check script ran", False)
+except ImportError:
+    print("  [SKIP] triton not installed")
 
 section("[9] end-to-end smoke")
 with tempfile.TemporaryDirectory() as tdir:
