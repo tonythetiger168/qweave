@@ -570,3 +570,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+    # Streaming `datasets` iterators leave HTTP worker threads alive; on some torch
+    # builds interpreter shutdown then aborts (PyGILState_Release, rc=134) after all
+    # outputs are written. Exit directly so a finished run reports rc=0.
+    sys.stdout.flush(); sys.stderr.flush()
+    os._exit(0)
