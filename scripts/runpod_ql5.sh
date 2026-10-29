@@ -11,6 +11,9 @@
 #       BRANCH (default claude/ql5-quality), RUNPOD_API_KEY (optional, stops pod)
 #       NO_STOP=1 keeps the pod up at the end (use it for QUICK=1)
 # Results: /workspace/ql5_runs/*  and  hf://datasets/<user>/qweave-runs/runs/<pod>/
+# Shutdown contract: when the run ends (success, failure or timeout) the
+# reports are pushed to HF with retries, THEN the pod is stopped (retried);
+# a container restarted after a finished run goes straight to push + stop.
 set -u
 export PIP_ROOT_USER_ACTION=ignore HF_HOME=/workspace/hf TOKENIZERS_PARALLELISM=false
 STAGE=${STAGE:-A}; Q=${QUICK:-0}
@@ -20,9 +23,14 @@ POD=${RUNPOD_POD_ID:-local}
 
 stop_pod() {   # NO_STOP=1 keeps the pod running (e.g. after the QUICK check)
   [ "${NO_STOP:-0}" = 1 ] && return
-  [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
-      -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
-  command -v runpodctl >/dev/null && runpodctl stop pod "$POD"
+  for i in $(seq 1 20); do    # retried: the pod dies as soon as one call lands
+    echo "stop_pod attempt $i $(date -u +%H:%M:%S)"
+    [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
+        -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
+    command -v runpodctl >/dev/null && runpodctl stop pod "$POD" >/dev/null 2>&1
+    sleep 30
+  done
+  echo "stop_pod: no stop call succeeded (no RUNPOD_API_KEY / runpodctl?)"
 }
 
 cat > /workspace/push_ql5.py <<'PY'
@@ -37,6 +45,13 @@ api.upload_folder(folder_path="/workspace/ql5_runs", repo_id=repo, repo_type="da
 print("pushed ->", repo, flush=True)
 PY
 push() { python /workspace/push_ql5.py >/dev/null 2>&1 || true; }
+push_retry() { # final upload: retried, and always before the pod is stopped
+  for i in 1 2 3 4 5; do
+    python /workspace/push_ql5.py && return 0
+    echo "push attempt $i failed"; sleep $(( i * 20 ))
+  done
+  echo "push failed 5x -- reports stay on the pod disk ($OUT)"; return 1
+}
 
 # job <gpus> <name> <cmd...>: run in the background on the given GPUs
 job() {
@@ -60,7 +75,9 @@ chain() {
     done ) &
 }
 
-trap 'date -u > $OUT/DONE; push; sleep 30; stop_pod' EXIT
+# container restarted after a finished run: never rerun, just push + stop
+if [ -f $OUT/DONE ] && [ "${NO_STOP:-0}" != 1 ]; then push_retry; stop_pod; exec sleep infinity; fi
+trap 'date -u > $OUT/DONE; push_retry; stop_pod' EXIT    # stop_pod honours NO_STOP
 
 echo "=== $(date -u +%H:%M:%S) setup (stage $STAGE, quick=$Q)"
 nvidia-smi --query-gpu=name,memory.total --format=csv | tee $OUT/gpu.txt
