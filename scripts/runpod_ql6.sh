@@ -120,11 +120,13 @@ per = [(b - a) / (n_new - 1) for a, b in zip(t1, tn)]
 r = {"model": model, "engine": "vllm", "tok_s": round(len(per) / sum(per), 1)}
 print(r); json.dump(r, open(out, "w"))
 PY
-  python -m venv /workspace/vllm-env && /workspace/vllm-env/bin/pip install -q vllm \
+  python -m venv /workspace/vllm-env && /workspace/vllm-env/bin/pip install -q vllm ninja \
       2>&1 | tail -2
   NP=$([ "$Q" = 1 ] && echo 4 || echo 24); NT=$([ "$Q" = 1 ] && echo 32 || echo 256)
   for m in $M06 $M4; do
-    step V_$(basename $m) /workspace/vllm-env/bin/python /workspace/vllm_ref.py $m $NT $NP \
+    # vLLM JIT-builds kernels with ninja, which must be on PATH
+    PATH=/workspace/vllm-env/bin:$PATH step V_$(basename $m) \
+        /workspace/vllm-env/bin/python /workspace/vllm_ref.py $m $NT $NP \
         $OUT/vllm_$(basename $m).json
   done
 fi
