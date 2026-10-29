@@ -43,6 +43,10 @@ FermiQLLM 1.0 的五個「量子增強」環節只有公司內測數字。qweave
 - **組合量化**：低秩 + INT8/FP8（小模型的 Pareto 前沿通常由量化主導，低秩要與之疊加才有意義）。
 - **驗收**（out-of-domain）：−20% 參數時 MMLU −≤2pt、GSM8K −≤5pt；dense 同配方微調作對照。
 - 成本：4× H100，約 US$300–600。
+- **實作（2026-10-29）**：`phase4_llm/ql5_compress.py`（Fisher 加權秩分配、知識/推理校準混合 +
+  13-gram 去污染、詞頻 × 隱狀態加權的嵌入/LM head 低秩、規範固定、INT8/FP8、分塊 KD 多 GPU heal），
+  `ql5_gate.py`（全測試集 paired bootstrap 信賴區間）。指令與成本（實估 US$130–200）見
+  [QL5_RUN_PLAN.md](QL5_RUN_PLAN.md)。尚無 GPU 實測數字。
 
 ### QL6 — 真的變快（修 F6，放大 F7）
 - 秩一律對齊 64/128（已實作 `--rank-align`），融合 `x·Bᵀ·Aᵀ` 為單一 Triton kernel。

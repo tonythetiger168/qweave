@@ -29,5 +29,9 @@ jobs:
         run: python phase4_llm/validate_ql1.py
       - name: QL1.5 heal pipeline smoke, raw MPO (CPU, no downloads)
         run: python phase4_llm/heal_finetune.py --smoke --format mpo --steps 20 --out /tmp/ql15-smoke
+      - name: Install transformers (QL5 suite builds a tiny random Qwen3)
+        run: pip install "transformers>=4.56"
+      - name: "QL5 validation (12 groups: gauge fixing, embedding SVD, chunked KD, Fisher, gate)"
+        run: python phase4_llm/validate_ql5.py
       - name: CLI smoke test
         run: qweave --phase 1

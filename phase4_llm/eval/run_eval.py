@@ -101,14 +101,38 @@ def robustness(model, tok, device, drift_len=8192, seed=0):
     return out
 
 
-def lm_eval_tasks(model, tok, tasks, limit, batch):
+SAMPLE_KEYS = ('acc_norm', 'acc', 'exact_match')
+
+
+def per_sample(samples):
+    """{subtask: {doc_id: 0/1 score}} from lm-eval logged samples, using the
+    same metric preference as the headline numbers (QL5 paired bootstrap)."""
+    out = {}
+    for t, rows in samples.items():
+        d = {}
+        for r in rows:
+            if r.get('filter', 'none') not in ('none', 'strict-match'):
+                continue                       # gsm8k: score the strict filter
+            for k in SAMPLE_KEYS:
+                if k in r:
+                    v = r[k]
+                    d[str(r['doc_id'])] = float(v[0] if isinstance(v, (list, tuple)) else v)
+                    break
+        out[t] = d
+    return out
+
+
+def lm_eval_tasks(model, tok, tasks, limit, batch, samples_out=None):
     import lm_eval
     from lm_eval.models.huggingface import HFLM
     lm = HFLM(pretrained=model, tokenizer=tok,
               batch_size=int(batch) if str(batch).isdigit() else batch)
     res = lm_eval.simple_evaluate(model=lm, tasks=tasks.split(','), limit=limit,
-                                  log_samples=False, random_seed=0,
+                                  log_samples=samples_out is not None, random_seed=0,
                                   numpy_random_seed=0, torch_random_seed=0)
+    if samples_out is not None:
+        with open(samples_out, 'w') as f:
+            json.dump(per_sample(res['samples']), f)
     out = {}
     for t, m in res['results'].items():
         for key in ('acc_norm,none', 'acc,none', 'exact_match,strict-match',
@@ -126,9 +150,14 @@ def lm_eval_tasks(model, tok, tasks, limit, batch):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dense', default='Qwen/Qwen3-0.6B')
-    ap.add_argument('--compressed', default=None, help='model.pt from heal_finetune')
+    ap.add_argument('--compressed', default=None,
+                    help='model.pt from heal_finetune / ql5_compress')
     ap.add_argument('--tasks', default=DEFAULT_TASKS)
-    ap.add_argument('--limit', type=float, default=500)
+    ap.add_argument('--limit', type=float, default=500,
+                    help='examples per task; 0 = full test sets (QL5 gate)')
+    ap.add_argument('--log-samples', action='store_true',
+                    help='write per-example scores (ql4_<name>_samples.json) '
+                         'for the paired bootstrap in ql5_gate.py')
     ap.add_argument('--batch', default='16')
     ap.add_argument('--skip-lm-eval', action='store_true')
     ap.add_argument('--skip-dense', action='store_true')
@@ -147,8 +176,12 @@ def main():
         r['robustness'] = robustness(model, tok, device)
         print(f"[ql4] {name} robustness: {r['robustness']}", flush=True)
         if not args.skip_lm_eval:
-            lim = int(args.limit) if args.limit >= 1 else args.limit
-            r['tasks'] = lm_eval_tasks(model, tok, args.tasks, lim, args.batch)
+            lim = None if args.limit == 0 else (int(args.limit) if args.limit >= 1
+                                                else args.limit)
+            so = f'{args.out}/ql4_{name}_samples.json' if args.log_samples else None
+            r['tasks'] = lm_eval_tasks(model, tok, args.tasks, lim, args.batch, so)
+            if so:
+                r['samples_file'] = os.path.basename(so)
             print(f"[ql4] {name} tasks: {r['tasks']}", flush=True)
         r['wall_s'] = round(time.time() - t0, 1)
         allres[name] = r
