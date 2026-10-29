@@ -33,5 +33,7 @@ jobs:
         run: pip install "transformers>=4.56"
       - name: "QL5 validation (12 groups: gauge fixing, embedding SVD, chunked KD, Fisher, gate)"
         run: python phase4_llm/validate_ql5.py
+      - name: "QL6 validation (9 groups: byte roofline, rank alignment, fusion, lossless speculative decoding)"
+        run: python phase4_llm/validate_ql6.py
       - name: CLI smoke test
         run: qweave --phase 1

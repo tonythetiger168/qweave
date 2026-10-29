@@ -8,7 +8,8 @@
 #   QUICK=1  minutes-long version of the chosen stage (checks the pod, ~US$3)
 #
 # Env:  HF_TOKEN (RunPod secret) -> reports pushed to <hf-user>/qweave-runs
-#       BRANCH (default claude/ql5-quality), RUNPOD_API_KEY (optional, stops pod)
+#       BRANCH (default claude/ql5-quality), RUNPOD_API_KEY (optional, stops pod),
+#       KEEP_POD=1 (do not stop the pod at the end)
 # Results: /workspace/ql5_runs/*  and  hf://datasets/<user>/qweave-runs/runs/<pod>/
 set -u
 export PIP_ROOT_USER_ACTION=ignore HF_HOME=/workspace/hf TOKENIZERS_PARALLELISM=false
@@ -58,7 +59,9 @@ chain() {
     done ) &
 }
 
-trap 'date -u > $OUT/DONE; push; sleep 30; stop_pod' EXIT
+# KEEP_POD=1: leave the pod running (e.g. to run runpod_ql6.sh STAGE=Q next)
+[ "${KEEP_POD:-0}" = 1 ] && trap 'date -u > $OUT/DONE; push' EXIT \
+                         || trap 'date -u > $OUT/DONE; push; sleep 30; stop_pod' EXIT
 
 echo "=== $(date -u +%H:%M:%S) setup (stage $STAGE, quick=$Q)"
 nvidia-smi --query-gpu=name,memory.total --format=csv | tee $OUT/gpu.txt
