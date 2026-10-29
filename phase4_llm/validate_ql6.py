@@ -182,6 +182,31 @@ check("static and dynamic paths accept the same drafts",
       st['alpha'] > 0 and abs(st['alpha'] - q6.speculative_generate(tgt, noisy, prompt, 40, 4)[1]['alpha']) < 0.15,
       f"alpha {st['alpha']:.2f}")
 
+# bf16: exact prefix agreement collapses on near-ties even with correct code;
+# lossless_report separates logic (fp32) from rounding (teacher-forced gaps)
+from transformers import Qwen3Config, Qwen3ForCausalLM
+cfg = Qwen3Config(vocab_size=2048, hidden_size=256, intermediate_size=768, num_hidden_layers=4,
+                  num_attention_heads=4, num_key_value_heads=2, head_dim=64,
+                  tie_word_embeddings=False)
+torch.manual_seed(1); t16 = Qwen3ForCausalLM(cfg).eval().to(torch.bfloat16)
+torch.manual_seed(1); d16 = Qwen3ForCausalLM(cfg).eval().to(torch.bfloat16)
+with torch.no_grad():
+    for p in d16.parameters():
+        p.add_(0.05 * p.float().std().to(p.dtype) * torch.randn_like(p))
+ps = [torch.randint(1, 2048, (1, 20), generator=torch.Generator().manual_seed(i)) for i in range(4)]
+for eng in ('eager', 'static'):
+    g_fn, s_fn, _ = q6.spec_engine(t16, d16, eng, 256, (5,))
+    sp = lambda i, n: s_fn(i, n, 5); sp.gamma = 5
+    ll = q6.lossless_report(t16, d16, g_fn, sp, ps, 96, eng, tol=0.05)
+    check(f"bf16 {eng}: fp32 agreement 1.0, every token within 0.05 of argmax "
+          f"(bf16 prefix agreement only {ll['prefix_bf16']:.2f})",
+          ll['fp32'] == 1.0 and ll['tf_within_spec'] == 1.0
+          and next(t16.parameters()).dtype == torch.bfloat16, str(ll))
+rep_ll = {'decode': [{'variant': 'spec', 'engine': 'compiled', 'route': 'L2', 'agreement': 0.6,
+                      'lossless': ll, 'speedup': 1.4, 'ci95': [1.35, 1.45]}]}
+check("gate uses fp32 + teacher-forced checks, not bf16 prefix agreement",
+      q6.gate(rep_ll)['decode_PASS_at_CI_bound'])
+
 section("[7] speculative speedup formula")
 check("alpha=0 -> 1/(gamma c + 1)", abs(q6.spec_speedup(0.0, 4, 0.25) - 0.5) < 1e-12)
 check("alpha=1, c=0 -> gamma + 1", abs(q6.spec_speedup(1.0, 4, 0.0) - 5) < 1e-12)

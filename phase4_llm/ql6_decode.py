@@ -651,6 +651,59 @@ def lossless_check(greedy_fn, spec_fn, prompts, new_tokens):
     return same / max(1, tot)
 
 
+@torch.no_grad()
+def teacher_forced_gaps(model, seq, prompt_len: int) -> torch.Tensor:
+    """For every generated token: (max logit - logit of that token) under ONE
+    batched forward of `model` over the whole sequence, in fp32. 0 means the
+    token is the model's argmax; a small positive gap is a near-tie that bf16
+    rounding can flip either way."""
+    lg = model(seq[:, :-1]).logits[0, prompt_len - 1:].float()
+    tok = seq[0, prompt_len:]
+    return lg.max(-1).values - lg.gather(-1, tok[:, None])[:, 0]
+
+
+def lossless_report(target, draft, greedy_fn, spec_fn, prompts, new_tokens, engine,
+                    tol: float = 0.25) -> dict:
+    """Three views of "speculative output == target greedy output":
+
+    prefix_bf16  identical-prefix fraction vs greedy on the same engine. In
+                 bf16 one near-tie flip (the batched verify forward rounds
+                 differently from one-token forwards) changes everything
+                 after it, so this is low even with correct code: QL6 stage S
+                 measured 0.40-0.76 on H100, and a 4-layer random Qwen3 gives
+                 0.3-0.5 in bf16 vs 1.0 in fp32 on CPU.
+    fp32         the same comparison with both models upcast to fp32 (exact,
+                 then cast back): tests the LOGIC; must be 1.0.
+    tf_within    fraction of emitted tokens whose teacher-forced gap to the
+                 target's argmax is <= tol logits, for spec AND for plain
+                 greedy (the noise floor of greedy itself)."""
+    ps = prompts
+    out = {'prefix_bf16': lossless_check(greedy_fn, spec_fn, ps, new_tokens)}
+    gs, gg = [], []
+    for ids in ps:
+        L = ids.shape[1]
+        gs.append(teacher_forced_gaps(target, spec_fn(ids, new_tokens)[0], L))
+        gg.append(teacher_forced_gaps(target, greedy_fn(ids, new_tokens), L))
+    gs, gg = torch.cat(gs), torch.cat(gg)
+    out.update(tf_within_spec=float((gs <= tol).float().mean()),
+               tf_within_greedy=float((gg <= tol).float().mean()),
+               tf_max_gap_spec=round(float(gs.max()), 4),
+               tf_max_gap_greedy=round(float(gg.max()), 4), tol=tol)
+    dt = next(target.parameters()).dtype
+    if dt != torch.float32:
+        try:
+            target.float(); draft.float()
+            g32, s32, _ = spec_engine(target, draft, 'eager' if engine == 'eager' else 'static',
+                                      max(p.shape[1] for p in ps) + new_tokens + 16, (8,))
+            sp = getattr(spec_fn, 'gamma', 4)
+            out['fp32'] = lossless_check(g32, lambda i, n: s32(i, n, sp), ps, new_tokens)
+        finally:
+            target.to(dt); draft.to(dt)
+    else:
+        out['fp32'] = out['prefix_bf16']
+    return out
+
+
 # ----------------------------------------------------------------------
 # prefill: dense SDPA vs QSA top-16, end to end
 # ----------------------------------------------------------------------
@@ -684,16 +737,26 @@ def gate(report: dict) -> dict:
     with fusion / INT8 is judged by the SMALLER of its speedup vs plain dense
     and vs dense with the same fusion / INT8 (so INT8 cannot pass on INT8's
     merit alone). Lossy
-    variants (route L1) only count with a QL5 quality PASS; lossless ones
-    (L2) need >= 99 % token agreement with dense greedy. Prefill: 32K."""
+    variants (route L1) only count with a QL5 quality PASS. Lossless ones
+    (L2) need exact agreement with dense greedy in fp32 (the logic) and, in
+    bf16, >= 99 % of emitted tokens within `tol` logits of the target's
+    argmax under teacher forcing, or no worse than plain greedy's own rate
+    (bf16 near-ties make exact bf16 agreement meaningless, see
+    lossless_report). Prefill: 32K."""
     out = {'decode_gate': DECODE_GATE, 'prefill_gate': PREFILL_GATE, 'decode': {}}
     best = None
     for row in report.get('decode', []):
         if row.get('variant') == 'dense' or 'speedup' not in row:
             continue
         lossless = row.get('route') == 'L2'
-        quality_ok = (row.get('agreement', 0) >= 0.99) if lossless else \
-            bool(row.get('quality_pass'))
+        if lossless and 'lossless' in row:
+            ll = row['lossless']                     # see lossless_report
+            quality_ok = ll['fp32'] >= 0.99 and \
+                ll['tf_within_spec'] >= min(0.99, ll['tf_within_greedy'] - 0.005)
+        elif lossless:
+            quality_ok = row.get('agreement', 0) >= 0.99
+        else:
+            quality_ok = bool(row.get('quality_pass'))
         s, ci = row['speedup'], row['ci95']
         if 'speedup_vs_matched' in row and row['speedup_vs_matched'] < s:
             s, ci = row['speedup_vs_matched'], row['ci95_vs_matched']
@@ -890,8 +953,16 @@ def main():
                     c = float(np.mean(dref)) / float(np.mean(ref[:4]))
                     for gm in gammas:
                         sp = lambda ids, n, gm=gm: spec_fn(ids, n, gm)
-                        agree = lossless_check(greedy_fn, sp, prompts[:min(8, len(prompts))],
-                                               min(args.new_tokens, 128))
+                        sp.gamma = gm
+                        ll = lossless_report(target, dm, greedy_fn, sp,
+                                             prompts[:min(8, len(prompts))],
+                                             min(args.new_tokens, 128), engine)
+                        if engine == 'compiled':      # the fp32 cast invalidates graphs
+                            torch._dynamo.reset()
+                            greedy_fn, spec_fn, dgreedy = spec_engine(
+                                target, dm, engine, max_len + max(gammas) + 2, gammas)
+                            sp = lambda ids, n, gm=gm: spec_fn(ids, n, gm)
+                            time_full(greedy_fn, prompts[:2], args.new_tokens, dev, warm=0)
                         per, st = time_full(sp, prompts, args.new_tokens, dev)
                         alpha = float(np.mean([x['alpha'] for x in st]))
                         tpc = float(np.mean([x['tokens_per_target_call'] for x in st]))
@@ -901,7 +972,8 @@ def main():
                                'tokens_per_target_call': round(tpc, 2),
                                'draft_cost_c': round(c, 3),
                                'predicted': round(spec_speedup(alpha, gm, c), 3),
-                               'agreement': round(agree, 4), 'speedup': round(s_, 3),
+                               'agreement': round(ll['prefix_bf16'], 4), 'lossless': ll,
+                               'speedup': round(s_, 3),
                                'ci95': [round(lo, 3), round(hi, 3)]}
                 except Exception as e:
                     row = {'variant': f'spec:{d}', 'engine': engine, 'route': 'L2',

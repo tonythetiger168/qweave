@@ -151,7 +151,50 @@ so a bad estimate shows up early.
 Below the plan's ~US$50 because speed is measured on shape-matched copies and
 needs no training except the draft.
 
-## Honest expectations
+## Stage S results (1× H100 SXM, 2026-10-29)
+
+torch 2.12.1, transformers 5.21.1, torchao 0.18. Raw logs and JSON: HF dataset
+`chienhsinlin/qweave-runs`, `runs/wg2dxaw82efhjm_ql6/stageS`. The run hit its
+5 h cap during the 4B step, so 4B γ=3, 4B prefill and the vLLM references did
+not run.
+
+| measurement | result | gate |
+|---|---|---|
+| 0.6B dense decode | 48.6 tok/s eager, 301 tok/s CUDA graphs | — |
+| 0.6B low-rank (keep 0.9 / 0.8 / 0.6), CUDA graphs | **0.91× / 0.95× / 0.84×** dense | FAIL |
+| 0.6B torchao INT8, batch 1 | dense 0.92×, low-rank 0.48–0.66× | FAIL |
+| gate/up fusion | dense 1.08× (CUDA graphs), 1.13× (eager) | — |
+| 0.6B QSA prefill vs SDPA | 8K 0.50×, 16K 1.10×, 32K **1.52×** | FAIL (needs 2×) |
+| 4B dense decode | 149 tok/s CUDA graphs | — |
+| 4B speculative, γ=5, CUDA graphs, draft Qwen3-0.6B-Base | **1.21× [1.12, 1.31]**, α 0.60 | FAIL (point < 1.3) |
+| … draft Qwen3-1.7B-Base | 1.00×, α 0.69 | |
+| … draft QL-compressed 0.6B (20 M-token heal) | 0.82×, α 0.40 | |
+
+**What this says.**
+- Low rank is *slower* than dense at batch 1 even though it reads 16–45 % fewer
+  bytes: two skinny GEMVs per layer (M = 1, r = 384–704) run far below
+  bandwidth, and the byte ceiling is not reached. This is the F6 lesson again,
+  now at decode. Closing it needs a GEMV kernel that keeps t = x·Bᵀ on chip,
+  which the PR argued against; the data now says it is the next thing to try.
+- INT8 weight-only kernels in torchao do not help batch-1 decode on H100.
+- Plain off-the-shelf speculative decoding (0.6B draft for 4B) gives 1.21×.
+  Our compressed draft is worse than the plain 0.6B: its acceptance rate is
+  lower and it is not cheaper per step (low rank is slower, above).
+- The 32K prefill end to end is 1.52×, short of 2×: QL3's 3.47× was the
+  attention kernel alone; MLPs and the selection pass do not shrink.
+
+**Agreement 0.40–0.76 was not a bug.** The report's `agreement` was the
+identical-prefix fraction against plain greedy in bf16. bf16 logits are
+coarse (spacing 0.125 at |logit| 16–32), the batched verify forward rounds
+differently from one-token forwards, so the first near-tie flips and every
+later token differs. A 4-layer random Qwen3 on CPU shows the same thing:
+0.3–0.5 in bf16, exactly 1.0 in fp32, and every emitted token within one bf16
+step of the target's argmax under teacher forcing. The gate now uses
+`lossless_report`: fp32 agreement (logic, must be 1.0) plus the teacher-forced
+gap of each emitted token, compared with plain greedy's own gaps. The 4B rows
+above need a rerun to get those numbers.
+
+## Honest expectations (written before the run)
 
 - L1 at the QL5 plan: expect about 1.1–1.15× with CUDA graphs. That would tie
   FermiQLLM's "+15 %" with a named baseline, not beat 1.3×.
