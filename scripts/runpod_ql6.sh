@@ -16,6 +16,9 @@
 #       BRANCH (default claude/ql6-decode), QL5_DIR (default /workspace/ql5_runs/stageA),
 #       VLLM=0 to skip the vLLM reference, RUNPOD_API_KEY (optional, stops pod)
 # Results: /workspace/ql6_runs/*  and  hf://datasets/<user>/qweave-runs/runs/<pod>_ql6/
+# Shutdown contract: when the run ends (success, failure or timeout) the
+# reports are pushed to HF with retries, THEN the pod is stopped (retried);
+# a container restarted after a finished run goes straight to push + stop.
 set -u
 export PIP_ROOT_USER_ACTION=ignore HF_HOME=/workspace/hf TOKENIZERS_PARALLELISM=false
 STAGE=${STAGE:-S}; Q=${QUICK:-0}
@@ -25,9 +28,14 @@ POD=${RUNPOD_POD_ID:-local}
 QL5_DIR=${QL5_DIR:-/workspace/ql5_runs/stageA}
 
 stop_pod() {
-  [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
-      -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
-  command -v runpodctl >/dev/null && runpodctl stop pod "$POD"
+  for i in $(seq 1 20); do    # retried: the pod dies as soon as one call lands
+    echo "stop_pod attempt $i $(date -u +%H:%M:%S)"
+    [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
+        -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
+    command -v runpodctl >/dev/null && runpodctl stop pod "$POD" >/dev/null 2>&1
+    sleep 30
+  done
+  echo "stop_pod: no stop call succeeded (no RUNPOD_API_KEY / runpodctl?)"
 }
 
 cat > /workspace/push_ql6.py <<'PY'
@@ -42,6 +50,13 @@ api.upload_folder(folder_path="/workspace/ql6_runs", repo_id=repo, repo_type="da
 print("pushed ->", repo, flush=True)
 PY
 push() { python /workspace/push_ql6.py >/dev/null 2>&1 || true; }
+push_retry() { # final upload: retried, and always before the pod is stopped
+  for i in 1 2 3 4 5; do
+    python /workspace/push_ql6.py && return 0
+    echo "push attempt $i failed"; sleep $(( i * 20 ))
+  done
+  echo "push failed 5x -- reports stay on the pod disk ($OUT)"; return 1
+}
 step() {   # step <name> <cmd...>: sequential, logged, pushed
   local name=$1; shift; local t=$(date +%s)
   echo "=== $(date -u +%H:%M:%S) [$name] $*"
@@ -50,8 +65,10 @@ step() {   # step <name> <cmd...>: sequential, logged, pushed
   grep -E "QL6 DECODE|tok_s|speedup" "$OUT/$name.log" | tail -4
   push
 }
-[ "${KEEP_POD:-0}" = 1 ] && trap 'date -u > $OUT/DONE; push' EXIT \
-                         || trap 'date -u > $OUT/DONE; push; sleep 30; stop_pod' EXIT
+# container restarted after a finished run: never rerun, just push + stop
+if [ -f $OUT/DONE ] && [ "${KEEP_POD:-0}" != 1 ]; then push_retry; stop_pod; exec sleep infinity; fi
+[ "${KEEP_POD:-0}" = 1 ] && trap 'date -u > $OUT/DONE; push_retry' EXIT \
+                         || trap 'date -u > $OUT/DONE; push_retry; stop_pod' EXIT
 
 echo "=== $(date -u +%H:%M:%S) setup (stage $STAGE, quick=$Q)"
 nvidia-smi --query-gpu=name,memory.total,clocks.max.memory --format=csv | tee $OUT/gpu.txt
