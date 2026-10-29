@@ -9,6 +9,7 @@
 #
 # Env:  HF_TOKEN (RunPod secret) -> reports pushed to <hf-user>/qweave-runs
 #       BRANCH (default claude/ql5-quality), RUNPOD_API_KEY (optional, stops pod)
+#       NO_STOP=1 keeps the pod up at the end (use it for QUICK=1)
 # Results: /workspace/ql5_runs/*  and  hf://datasets/<user>/qweave-runs/runs/<pod>/
 set -u
 export PIP_ROOT_USER_ACTION=ignore HF_HOME=/workspace/hf TOKENIZERS_PARALLELISM=false
@@ -17,7 +18,8 @@ OUT=/workspace/ql5_runs/stage$STAGE; mkdir -p $OUT
 exec > >(tee -a $OUT/run.log) 2>&1
 POD=${RUNPOD_POD_ID:-local}
 
-stop_pod() {
+stop_pod() {   # NO_STOP=1 keeps the pod running (e.g. after the QUICK check)
+  [ "${NO_STOP:-0}" = 1 ] && return
   [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
       -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
   command -v runpodctl >/dev/null && runpodctl stop pod "$POD"
