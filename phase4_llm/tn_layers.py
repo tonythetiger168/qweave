@@ -351,6 +351,155 @@ class LowRankLinear(torch.nn.Module):
         y = torch.nn.functional.linear(torch.nn.functional.linear(x, self.B), self.A)
         return y + self.bias if self.bias is not None else y
 
+    def regauge(self) -> torch.Tensor:
+        return regauge_(self.A, self.B)
+
+
+@torch.no_grad()
+def regauge_(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """QL5/G1 gauge fixing, in place. A B is invariant under A G, G^-1 B;
+    fix the gauge to the balanced canonical form A = Q_a U s^1/2,
+    B = s^1/2 V^T Q_b^T (QR of both sites, then an r x r SVD of the bond,
+    as MPSCanonical does for MPS bonds). A B is unchanged up to round-off;
+    returns the bond singular values s."""
+    Qa, Ra = torch.linalg.qr(A.double())                  # (m, r), (r, r)
+    Qb, Rb = torch.linalg.qr(B.double().T)                # (n, r), (r, r)
+    U, s, Vh = torch.linalg.svd(Ra @ Rb.T)
+    rs = s.sqrt()
+    A.copy_(((Qa @ U) * rs).to(A.dtype))
+    B.copy_((rs[:, None] * (Vh @ Qb.T)).to(B.dtype))
+    return s
+
+
+# ======================================================================
+# QL5/D1: frequency-weighted low-rank embedding + (tied) LM head
+# ----------------------------------------------------------------------
+# Qwen3-0.6B's 151,936 x 1,024 embedding is ~26 % of the model and is
+# shared with the LM head. Raw-norm truncation fails for the same reason
+# as F1: most rows are tokens the model almost never sees or emits. The
+# error that matters is weighted on BOTH sides,
+#     || D^1/2 (E - E_r) S ||_F ,  D = diag(token frequency + floor),
+#                                  S S^T = gram of final hidden states,
+# because the embedding side is read once per occurrence of a token and
+# the head side's logit error (e_v - e_v')^T h is weighted by h. As for
+# whitened_svd this is exact: SVD of D^1/2 E S and undo both whitenings.
+# ======================================================================
+class LowRankEmbedding(torch.nn.Module):
+    """E ~ A B, A (vocab, r), B (r, dim). Lookup = A[ids] @ B."""
+
+    def __init__(self, A: torch.Tensor, B: torch.Tensor):
+        super().__init__()
+        self.A = torch.nn.Parameter(A.contiguous())
+        self.B = torch.nn.Parameter(B.contiguous())
+        self.num_embeddings, self.embedding_dim = A.shape[0], B.shape[1]
+
+    @property
+    def rank(self) -> int:
+        return self.B.shape[0]
+
+    @property
+    def weight(self) -> torch.Tensor:          # for code that reads .weight
+        return self.A @ self.B
+
+    def forward(self, ids):
+        return torch.nn.functional.embedding(ids, self.A) @ self.B
+
+    def regauge(self) -> torch.Tensor:
+        return regauge_(self.A, self.B)
+
+
+class LowRankHead(torch.nn.Module):
+    """logits = (h B^T) A^T. With `tied` it reuses a LowRankEmbedding's
+    factors (Qwen3 ties the LM head to the input embedding)."""
+
+    def __init__(self, A: Optional[torch.Tensor] = None,
+                 B: Optional[torch.Tensor] = None,
+                 tied: Optional[LowRankEmbedding] = None):
+        super().__init__()
+        if tied is not None:
+            self.tied = tied
+        else:
+            self.tied = None
+            self.A = torch.nn.Parameter(A.contiguous())
+            self.B = torch.nn.Parameter(B.contiguous())
+        f = tied if tied is not None else self
+        self.in_features, self.out_features = f.B.shape[1], f.A.shape[0]
+
+    def factors(self):
+        f = self.tied if self.tied is not None else self
+        return f.A, f.B
+
+    @property
+    def rank(self) -> int:
+        return self.factors()[1].shape[0]
+
+    @property
+    def weight(self) -> torch.Tensor:
+        A, B = self.factors()
+        return A @ B
+
+    def forward(self, h):
+        A, B = self.factors()
+        return torch.nn.functional.linear(torch.nn.functional.linear(h, B), A)
+
+
+def weighted_embedding_svd(E: torch.Tensor, freq: torch.Tensor,
+                           gram: Optional[torch.Tensor] = None,
+                           floor: float = 1e-6, damp: float = 1e-4):
+    """Factor E (vocab, dim) so that rank-r truncation minimises
+    ||D^1/2 (E - A_r B_r) S||, D = diag(freq/sum + floor), S S^T = gram
+    (identity when None: untied input embedding). Returns (A, Sigma, B)
+    with A = D^-1/2 U Sigma^1/2 and B = Sigma^1/2 V^T S^-1; the weighted
+    error at rank r is sqrt(sum_{i>=r} Sigma_i^2)."""
+    E = E.double()
+    f = freq.double().to(E.device)
+    d = (f / f.sum().clamp_min(1e-30) + floor).sqrt()               # D^1/2
+    M = d[:, None] * E
+    if gram is not None:
+        G = gram.double().to(E.device)
+        G = G + damp * G.diagonal().mean() * torch.eye(G.shape[0], dtype=G.dtype,
+                                                       device=G.device)
+        S = torch.linalg.cholesky(G)
+        M = M @ S
+    U, Sig, Vh = torch.linalg.svd(M.float(), full_matrices=False)
+    U, Sig, Vh = U.double(), Sig.double(), Vh.double()
+    if gram is not None:
+        Vh = torch.linalg.solve_triangular(S, Vh, upper=False, left=False)
+    rs = Sig.sqrt()
+    return (U * rs) / d[:, None], Sig, rs[:, None] * Vh
+
+
+# ======================================================================
+# QL5: weight-only fake quantisation on top of low rank (INT8 / FP8)
+# ======================================================================
+@torch.no_grad()
+def fake_quant_(W: torch.Tensor, fmt: str = 'int8') -> torch.Tensor:
+    """In place, per-output-row symmetric scale. int8: round to 127 levels;
+    fp8: cast through float8_e4m3fn (max 448). Returns the scales."""
+    amax = W.abs().amax(dim=-1, keepdim=True).clamp_min(1e-12)
+    if fmt == 'int8':
+        sc = amax / 127.0
+        W.copy_((W / sc).round().clamp_(-127, 127) * sc)
+    elif fmt == 'fp8':
+        sc = amax / 448.0
+        W.copy_((W / sc).to(torch.float8_e4m3fn).to(W.dtype) * sc)
+    else:
+        raise ValueError(fmt)
+    return sc
+
+
+@torch.no_grad()
+def quantize_model_(model, fmt: str = 'int8') -> int:
+    """Fake-quantise every 2-D weight / low-rank factor except norms.
+    Returns the number of quantised parameters."""
+    n, seen = 0, set()
+    for name, p in model.named_parameters():
+        if p.dim() == 2 and id(p) not in seen:
+            seen.add(id(p))
+            fake_quant_(p.data, fmt)
+            n += p.numel()
+    return n
+
 
 def whitened_svd(W: torch.Tensor, gram: torch.Tensor, damp: float = 1e-4):
     """Returns (U Sigma^1/2, Sigma, Sigma^1/2 V^T S^-1) of W S, gram = S S^T.
@@ -374,9 +523,19 @@ def lowrank_from_svd(US, Bfull, rank, bias=None, dtype=torch.float32):
 
 
 def compression_plan(model) -> dict:
-    """{qualified module name: [out, in, rank, has_bias]} for LowRankLinear."""
-    return {n: [m.out_features, m.in_features, m.rank, m.bias is not None]
-            for n, m in model.named_modules() if isinstance(m, LowRankLinear)}
+    """{qualified module name: [out, in, rank, has_bias]} for LowRankLinear,
+    ['emb', vocab, dim, rank] for LowRankEmbedding and
+    ['head', out, in, rank, tied_to_name_or_None] for LowRankHead."""
+    plan, names = {}, {id(m): n for n, m in model.named_modules()}
+    for n, m in model.named_modules():
+        if isinstance(m, LowRankLinear):
+            plan[n] = [m.out_features, m.in_features, m.rank, m.bias is not None]
+        elif isinstance(m, LowRankEmbedding):
+            plan[n] = ['emb', m.num_embeddings, m.embedding_dim, m.rank]
+        elif isinstance(m, LowRankHead):
+            plan[n] = ['head', m.out_features, m.in_features, m.rank,
+                       names[id(m.tied)] if m.tied is not None else None]
+    return plan
 
 
 def save_compressed(model, model_id: str, path: str):
@@ -391,10 +550,21 @@ def load_compressed(path: str, device='cuda', dtype=torch.bfloat16):
     ck = torch.load(path, map_location='cpu', weights_only=False)
     model = AutoModelForCausalLM.from_pretrained(ck['model_id'], dtype=dtype,
                                                  attn_implementation="sdpa")
-    for name, (o, i, r, hb) in ck['plan'].items():
+    z = lambda *s: torch.zeros(*s, dtype=dtype)
+    plan = ck['plan']
+    # embeddings first: a tied head points at an already rebuilt embedding
+    for name, e in sorted(plan.items(), key=lambda kv: kv[1][0] != 'emb'):
         parent, _, child = name.rpartition('.')
-        setattr(model.get_submodule(parent), child,
-                LowRankLinear(torch.zeros(o, r, dtype=dtype), torch.zeros(r, i, dtype=dtype),
-                              torch.zeros(o, dtype=dtype) if hb else None))
+        if e[0] == 'emb':
+            new = LowRankEmbedding(z(e[1], e[3]), z(e[3], e[2]))
+        elif e[0] == 'head':
+            new = (LowRankHead(tied=model.get_submodule(e[4])) if e[4]
+                   else LowRankHead(z(e[1], e[3]), z(e[3], e[2])))
+        else:
+            o, i, r, hb = e
+            new = LowRankLinear(z(o, r), z(r, i), z(o) if hb else None)
+        setattr(model.get_submodule(parent), child, new)
+    if any(e[0] == 'head' for e in plan.values()):
+        model.config.tie_word_embeddings = False   # factors are shared already
     model.load_state_dict(ck['state_dict'], strict=True)
     return model.to(device).eval()
