@@ -50,7 +50,7 @@ def bootstrap_diff(xa, xb, n=10_000, seed=0):
     return float(d.mean()), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))
 
 
-def gate(dense_samples, comp_samples, saving_pct=None, gates=GATES):
+def gate(dense_samples, comp_samples, saving_pct=None, gates=GATES, min_saving=MIN_SAVING):
     out, ok_point, ok_ci = {}, True, True
     for task, max_drop in gates.items():
         xa, xb = paired(dense_samples, comp_samples, task)
@@ -67,7 +67,7 @@ def gate(dense_samples, comp_samples, saving_pct=None, gates=GATES):
                      'max_drop': max_drop, 'pass_point': bool(p), 'pass_ci': bool(c)}
         ok_point &= p; ok_ci &= c
     if saving_pct is not None:
-        s = saving_pct >= MIN_SAVING
+        s = saving_pct >= min_saving
         out['param_saving_pct'] = saving_pct
         ok_point &= s; ok_ci &= s
     out['PASS'] = bool(ok_point)
@@ -80,6 +80,8 @@ def main():
     ap.add_argument('--dense', required=True, help='ql4_dense.json')
     ap.add_argument('--compressed', required=True, help='ql4_compressed.json')
     ap.add_argument('--ql5-report', default=None, help='ql5_report.json (param saving)')
+    ap.add_argument('--min-saving', type=float, default=MIN_SAVING,
+                    help='required %% of total params removed (Pareto sweep: 0)')
     ap.add_argument('--out', default=None)
     args = ap.parse_args()
     rd, sd = _load_samples(args.dense)
@@ -89,7 +91,7 @@ def main():
         saving = json.load(open(args.ql5_report))['param_saving_pct']
     elif rd.get('params') and rc.get('params'):
         saving = round(100 * (1 - rc['params'] / rd['params']), 2)
-    res = gate(sd, sc, saving)
+    res = gate(sd, sc, saving, min_saving=args.min_saving)
     print(json.dumps(res, indent=2))
     for t in GATES:
         r = res[t]

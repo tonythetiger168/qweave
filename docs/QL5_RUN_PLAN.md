@@ -123,3 +123,18 @@ the 0.6B stage decides whether 4B is worth running.
   MMLU and GSM8K are English and will not show that cost, so stage A also
   reports WikiText PPL and the robustness suite, and a Chinese eval (e.g.
   CMMLU) should be added before claiming anything for Chinese use.
+
+## Stage C: ablation evals + Pareto sweep (added 2026-10-29, after stage A)
+
+Stage A's models were deleted with its pod, so stage C retrains the six 25M-token
+ablations (`C_*`) and adds a −5 / −10 / −15 % sweep (`S05`, `S10`, `S15`) that uses the
+no-Fisher allocation and keeps the embedding's share of the saving at ~65 %. Every
+model is evaluated on full MMLU + GSM8K right after training, on the same GPU, and
+gated with `--min-saving 0`, so each row reports whether its quality drop is within
+−2 / −5. All runs use 25M tokens and are compared with `C_ref` (the −20 % main recipe at
+25M). Estimated ~3.5–4 h on Secure 4× H100 (~US$55–65), so use a 270-minute cap.
+
+```bash
+R=https://raw.githubusercontent.com/tonythetiger168/qweave/claude/ql5-quality/scripts
+nohup bash -c "curl -sL $R/runpod_ql5.sh | STAGE=C timeout 270m bash" > /workspace/ql5_C.out 2>&1 &
+```

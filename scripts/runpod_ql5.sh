@@ -5,6 +5,10 @@
 #            ablations, then full-test-set MMLU/GSM8K gate   (~3.5 h, ~US$45-70)
 #   STAGE=B  Qwen3-4B-Base: main recipe + dense control, 4-GPU data parallel,
 #            then the gate                                    (~7 h,  ~US$85-130)
+#   STAGE=C  Qwen3-0.6B-Base follow-up to A (stage A models were deleted with its
+#            pod): retrain the 6 ablations + a -5/-10/-15 % Pareto sweep, all at
+#            25M heal tokens, each followed by its MMLU/GSM8K eval on the same GPU
+#            (~3.5-4 h, ~US$55-65 on Secure 4x H100; use a 270m cap)
 #   QUICK=1  minutes-long version of the chosen stage (checks the pod, ~US$3)
 #
 # Env:  HF_TOKEN (RunPod secret) -> reports pushed to <hf-user>/qweave-runs
@@ -152,6 +156,54 @@ if [ "$STAGE" = A ]; then
   for d in A1_main A1_int8 A2_dense_ctl A3_ref A3_nofisher A3_noembed A3_webonly \
            A3_regauge A3_embed035; do
     echo "--- gate $d"; gate $OUT/$d 2>&1 | tail -3 | tee $OUT/$d.gate.txt
+  done
+elif [ "$STAGE" = C ]; then
+  M=Qwen/Qwen3-0.6B-Base
+  # tr <name> <flags...>: 25M-token run then its gate eval, as one chain segment
+  # Sweep (S*) uses the no-Fisher allocation (best healed PPL in stage A) and keeps the
+  # embedding's share of the saving at stage A's ~65 % (keep 0.881/0.755/0.629 ->
+  # rank 896/768/640). Order = priority, in case the time cap hits.
+  R="--model $M --heal-tokens $ABL --save-model"
+  chain 0 \
+    C_ref         python $C $R --out $OUT/C_ref -- \
+    C_ref_eval    ev $OUT/C_ref $GATE_TASKS -- \
+    S15           python $C $R --alloc-weight none --total-saving 0.15 --embed-keep 0.629 \
+                    --out $OUT/S15 -- \
+    S15_eval      ev $OUT/S15 $GATE_TASKS
+  chain 1 \
+    C_nofisher    python $C $R --alloc-weight none --quant int8 --out $OUT/C_nofisher -- \
+    C_nofisher_eval ev $OUT/C_nofisher $GATE_TASKS -- \
+    C_int8_link   bash -c "mkdir -p $OUT/C_nofisher_int8 && \
+                    ln -sf $OUT/C_nofisher/model_int8.pt $OUT/C_nofisher_int8/model.pt && \
+                    ln -sfn $OUT/C_nofisher/tokenizer $OUT/C_nofisher_int8/tokenizer && \
+                    cp $OUT/C_nofisher/ql5_report.json $OUT/C_nofisher_int8/" -- \
+    C_nofisher_int8_eval ev $OUT/C_nofisher_int8 $GATE_TASKS -- \
+    S10           python $C $R --alloc-weight none --total-saving 0.10 --embed-keep 0.755 \
+                    --out $OUT/S10 -- \
+    S10_eval      ev $OUT/S10 $GATE_TASKS
+  chain 2 \
+    C_dense_eval  python $E --dense $M --tasks $GATE_TASKS --limit $LIM --log-samples \
+                    --out $OUT/dense_base/eval -- \
+    S05           python $C $R --alloc-weight none --total-saving 0.05 --embed-keep 0.881 \
+                    --out $OUT/S05 -- \
+    S05_eval      ev $OUT/S05 $GATE_TASKS -- \
+    C_webonly     python $C $R --calib-mix fineweb:1 --heal-mix fineweb:1 --source-weight "" \
+                    --out $OUT/C_webonly -- \
+    C_webonly_eval ev $OUT/C_webonly $GATE_TASKS
+  chain 3 \
+    C_noembed     python $C $R --embed-keep 1 --out $OUT/C_noembed -- \
+    C_noembed_eval ev $OUT/C_noembed $GATE_TASKS -- \
+    C_embed035    python $C $R --embed-keep 0.35 --out $OUT/C_embed035 -- \
+    C_embed035_eval ev $OUT/C_embed035 $GATE_TASKS -- \
+    C_regauge     python $C $R --regauge-every 200 --out $OUT/C_regauge -- \
+    C_regauge_eval ev $OUT/C_regauge $GATE_TASKS
+  wait
+  for d in C_ref C_nofisher C_nofisher_int8 C_noembed C_embed035 C_webonly C_regauge \
+           S05 S10 S15; do
+    echo "--- gate $d"
+    python $G --dense $OUT/dense_base/eval/ql4_dense.json \
+        --compressed $OUT/$d/eval/ql4_compressed.json --ql5-report $OUT/$d/ql5_report.json \
+        --min-saving 0 --out $OUT/$d/gate.json 2>&1 | tail -3 | tee $OUT/$d.gate.txt
   done
 else
   M=Qwen/Qwen3-4B-Base

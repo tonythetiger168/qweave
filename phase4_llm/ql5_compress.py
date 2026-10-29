@@ -373,6 +373,9 @@ def main():
 
         # ---- layer ranks under the remaining budget ----
         need = args.total_saving * total_before - emb_saved
+        if need < 0:
+            log(f"[ql5] WARNING: embedding alone saves {emb_saved / total_before:.1%} > "
+                f"--total-saving {args.total_saving:.1%}; raise --embed-keep")
         layer_saving = max(0.0, need / cand_params)
         ratios = [float(r) for r in args.ratios.split(',')]
         L, K = len(cands), len(ratios) + 1
