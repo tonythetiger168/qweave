@@ -175,6 +175,8 @@ class BpOsdDecoder:
         v2c = np.full((S, self.E), self.prior)
         post = np.full((S, self.n), self.prior)
         hard = np.zeros((S, self.n), np.uint8)
+        final_post = post.copy()
+        cur = hard.copy()
         done = np.zeros(S, bool)
         chk_idx = np.where(self.chk_mask, self.chk, 0)
         var_idx = np.where(self.var_mask, self.var, 0)
@@ -201,11 +203,16 @@ class BpOsdDecoder:
             v2c = np.zeros((S, self.E))
             v2c[:, self.var[self.var_mask]] = v2c_pad[:, self.var_mask]
 
-            hard = (post < 0).astype(np.uint8)
-            done = np.all(((hard.astype(np.int64) @ self.H.T) % 2) == syndromes, axis=1)
+            cur = (post < 0).astype(np.uint8)
+            ok = np.all(((cur.astype(np.int64) @ self.H.T) % 2) == syndromes, axis=1)
+            # freeze each shot at its first converged iteration (as ldpc does)
+            new = ok & ~done
+            hard[new], final_post[new] = cur[new], post[new]
+            done |= ok
             if done.all():
                 break
-        return hard, post, done
+        hard[~done], final_post[~done] = cur[~done], post[~done]
+        return hard, final_post, done
 
     # -- ordered statistics decoding ----------------------------------
     def osd0(self, syndrome: np.ndarray, posterior: np.ndarray) -> np.ndarray:
@@ -275,3 +282,38 @@ if __name__ == "__main__":
         r = code_capacity_ler(hx, hz, p, shots=2000, seed=1)
         print(f"p={p:.2f}  LER={r['ler']:.4f} ({r['errors']}/{r['shots']})  "
               f"{time.time() - t0:.1f}s")
+
+
+def make_decoder(H: np.ndarray, error_rate: float, backend: str = "auto", **kw):
+    """
+    BP+OSD-0 decoder with a ``decode_batch(syndromes)`` method.
+
+    backend: "torch-cuda" (batched BP on GPU), "ldpc" (Roffe's C++ BP+OSD,
+    fastest on CPU), "torch-cpu", "numpy", or "auto" = the first of
+    torch-cuda / ldpc / numpy that is available. All make the same
+    decisions up to floating-point ties.
+    """
+    def has_cuda():
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
+
+    def has_ldpc():
+        try:
+            import ldpc  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    if backend == "auto":
+        backend = "torch-cuda" if has_cuda() else "ldpc" if has_ldpc() else "numpy"
+    if backend in ("torch-cuda", "torch-cpu"):
+        from phase2_noise.qldpc_gpu import TorchBpOsdDecoder
+        return TorchBpOsdDecoder(H, error_rate, device=backend.split("-")[1], **kw)
+    if backend == "ldpc":
+        return LdpcReference(H, error_rate, **kw)
+    if backend == "numpy":
+        return BpOsdDecoder(H, error_rate, **kw)
+    raise ValueError(f"unknown decoder backend {backend!r}")
