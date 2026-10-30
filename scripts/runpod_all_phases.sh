@@ -1,5 +1,8 @@
 #!/bin/bash
 # qweave -- run ALL phases on one RunPod GPU pod, upload reports, stop the pod.
+# Shutdown contract: when the run ends (success, failure or timeout) the
+# reports are pushed to HF with retries, THEN the pod is stopped (retried);
+# a restarted container sees DONE and goes straight to push + stop.
 #
 # Phases I-III (simulators) validation, QL1 validation, QL2 benchmarks,
 # QL1.5 heal runs (dense baseline + TT compression ablations), QL3 QSA
@@ -15,11 +18,26 @@ OUT=/workspace/qweave_runs; mkdir -p $OUT
 exec > >(tee -a $OUT/run.log) 2>&1
 POD=${RUNPOD_POD_ID:-local}
 
-stop_pod() {
-  [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
-      -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
-  command -v runpodctl >/dev/null && runpodctl stop pod "$POD"
+stop_pod() {   # retried: the pod dies as soon as one stop call lands
+  for i in $(seq 1 20); do
+    echo "stop_pod attempt $i $(date -u +%H:%M:%S)"
+    [ -n "${RUNPOD_API_KEY:-}" ] && curl -sS -X POST "https://rest.runpod.io/v1/pods/$POD/stop" \
+        -H "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null 2>&1
+    command -v runpodctl >/dev/null && runpodctl stop pod "$POD" >/dev/null 2>&1
+    sleep 30
+  done
+  echo "stop_pod: no stop call succeeded (no RUNPOD_API_KEY / runpodctl?)"
 }
+
+push_retry() { # data first: retry the HF upload before anything stops the pod
+  for i in 1 2 3 4 5; do
+    python /workspace/push.py && return 0
+    echo "push attempt $i failed"; sleep $(( i * 20 ))
+  done
+  echo "push failed 5x -- reports stay on the pod disk ($OUT)"; return 1
+}
+
+finish() { date -u > $OUT/DONE; push_retry; stop_pod; }
 
 cat > /workspace/push.py <<'PY'
 import os
@@ -45,7 +63,9 @@ stage() {   # stage <name> <timeout> <cmd...>   (ONLY="a b c" runs a subset)
   python /workspace/push.py >/dev/null 2>&1 || true
 }
 
-trap 'date -u > $OUT/DONE; python /workspace/push.py || true; sleep 30; stop_pod' EXIT
+# container restarted after a finished run: never rerun, just push + stop
+if [ -f $OUT/DONE ]; then push_retry; stop_pod; exec sleep infinity; fi
+trap finish EXIT
 
 echo "=== $(date -u +%H:%M:%S) setup"
 nvidia-smi --query-gpu=name,memory.total --format=csv | tee $OUT/gpu.txt

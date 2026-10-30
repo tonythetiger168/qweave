@@ -333,7 +333,6 @@ def main():
                 return True
         return False
 
-    from phase4_llm.tn_layers import mpo_decompose
     for idx, r in plan.items():
         name, mod = candidates[idx]
         with torch.no_grad():
@@ -349,11 +348,8 @@ def main():
             else:
                 new = MPOLinear(mod.in_features, mod.out_features,
                                 chi_max=args.chi, eps=args.eps,
-                                bias=mod.bias is not None, device=device)
-                cs = mpo_decompose(mod.weight.detach().float(), args.chi, args.eps,
-                                   new.row_bits, new.col_bits)
-                for p, c in zip(new.cores, cs):
-                    p.copy_(c)
+                                bias=mod.bias is not None, device=device,
+                                weight=mod.weight.detach().float())
             if mod.bias is not None and args.format != 'wsvd':
                 new.bias.copy_(mod.bias)
         assert _replace(model, mod, new), f"cannot replace {name}"

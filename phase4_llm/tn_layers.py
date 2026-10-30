@@ -84,11 +84,16 @@ class MPOLinear(torch.nn.Module):
 
     def __init__(self, in_features: int, out_features: int,
                  chi_max: int = 64, eps: float = 1e-3,
-                 bias: bool = True, device=None, dtype=None):
+                 bias: bool = True, device=None, dtype=None,
+                 weight: Optional[torch.Tensor] = None):
         super().__init__()
         factory = {'device': device, 'dtype': dtype or torch.float32}
-        W = torch.nn.Linear(in_features, out_features, bias=False,
-                            **factory).weight.data
+        # Cores are built from `weight` directly: adaptive chi makes the
+        # core shapes depend on the weight, so they cannot be copied in later.
+        if weight is None:
+            weight = torch.nn.Linear(in_features, out_features, bias=False,
+                                     **factory).weight.data
+        W = weight.detach().to(**factory)
         self.row_bits = max(1, (out_features - 1).bit_length())
         self.col_bits = max(1, (in_features - 1).bit_length())
         self.cores = torch.nn.ParameterList(
@@ -98,6 +103,19 @@ class MPOLinear(torch.nn.Module):
         self.out_features = out_features
         self.bias = torch.nn.Parameter(torch.zeros(out_features, **factory)) \
             if bias else None
+
+    @classmethod
+    def from_linear(cls, linear: torch.nn.Linear, chi_max: int = 64,
+                    eps: float = 1e-3, dtype=None) -> "MPOLinear":
+        """Compress an existing nn.Linear (weight and bias)."""
+        W = linear.weight
+        m = cls(linear.in_features, linear.out_features, chi_max=chi_max,
+                eps=eps, bias=linear.bias is not None, device=W.device,
+                dtype=dtype or W.dtype, weight=W)
+        if linear.bias is not None:
+            with torch.no_grad():
+                m.bias.copy_(linear.bias)
+        return m
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (..., in) -> (..., out)

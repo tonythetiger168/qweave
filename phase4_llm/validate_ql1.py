@@ -70,12 +70,7 @@ for (o, i_, chi) in ((64, 64, 16), (256, 256, 32), (96, 160, 16)):
     dense = torch.nn.Linear(i_, o).to(dev)
     with torch.no_grad():
         dense.bias.zero_()
-    mpo = MPOLinear(i_, o, chi_max=chi, eps=1e-12, device=dev).to(dev)
-    with torch.no_grad():   # copy same weight for exact comparison
-        cores = mpo_decompose(dense.weight.data, chi_max=chi, eps=1e-12,
-                              row_bits=mpo.row_bits, col_bits=mpo.col_bits)
-        for p, c in zip(mpo.cores, cores):
-            p.copy_(c)
+    mpo = MPOLinear.from_linear(dense, chi_max=chi, eps=1e-12)
     x = torch.randn(8, i_, device=dev)
     y0 = torch.nn.functional.linear(x, mpo.effective_weight(), mpo.bias)
     y1 = mpo(x)
