@@ -113,6 +113,21 @@ s = (e.astype(np.int64) @ hz.T % 2).astype(np.uint8)
 c = dec.decode_batch(s)
 check("every correction reproduces its syndrome",
       np.array_equal((c.astype(np.int64) @ hz.T) % 2, s))
+try:
+    from phase2_noise.qldpc import make_decoder
+    tdec = make_decoder(hz, 0.06, backend="torch-cpu")
+    t0 = time.time()
+    tor = code_capacity_ler(hx, hz, 0.06, shots, decoder=tdec, seed=31)
+    dt = time.time() - t0
+    check("batched torch BP+OSD: same failures as numpy (+-2)",
+          abs(tor['errors'] - ours['errors']) <= 2,
+          f"(torch {tor['errors']}, numpy {ours['errors']}; {dt / shots * 1e6:.0f} us/shot on CPU)")
+    tc = tdec.decode_batch(s)
+    check("torch corrections reproduce syndromes, agree with numpy on >=99% of shots",
+          np.array_equal((tc.astype(np.int64) @ hz.T) % 2, s)
+          and np.mean(np.all(tc == c, axis=1)) >= 0.99)
+except ImportError:
+    print("  [SKIP] torch not installed")
 
 # ------------------------------------------------------------------
 print("=" * 70); print("[6] Gross code vs 12 surface code patches"); print("=" * 70)
