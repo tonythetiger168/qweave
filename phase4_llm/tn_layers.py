@@ -84,11 +84,16 @@ class MPOLinear(torch.nn.Module):
 
     def __init__(self, in_features: int, out_features: int,
                  chi_max: int = 64, eps: float = 1e-3,
-                 bias: bool = True, device=None, dtype=None):
+                 bias: bool = True, device=None, dtype=None,
+                 weight: Optional[torch.Tensor] = None):
         super().__init__()
         factory = {'device': device, 'dtype': dtype or torch.float32}
-        W = torch.nn.Linear(in_features, out_features, bias=False,
-                            **factory).weight.data
+        # Cores are built from `weight` directly: adaptive chi makes the
+        # core shapes depend on the weight, so they cannot be copied in later.
+        if weight is None:
+            weight = torch.nn.Linear(in_features, out_features, bias=False,
+                                     **factory).weight.data
+        W = weight.detach().to(**factory)
         self.row_bits = max(1, (out_features - 1).bit_length())
         self.col_bits = max(1, (in_features - 1).bit_length())
         self.cores = torch.nn.ParameterList(
@@ -98,6 +103,19 @@ class MPOLinear(torch.nn.Module):
         self.out_features = out_features
         self.bias = torch.nn.Parameter(torch.zeros(out_features, **factory)) \
             if bias else None
+
+    @classmethod
+    def from_linear(cls, linear: torch.nn.Linear, chi_max: int = 64,
+                    eps: float = 1e-3, dtype=None) -> "MPOLinear":
+        """Compress an existing nn.Linear (weight and bias)."""
+        W = linear.weight
+        m = cls(linear.in_features, linear.out_features, chi_max=chi_max,
+                eps=eps, bias=linear.bias is not None, device=W.device,
+                dtype=dtype or W.dtype, weight=W)
+        if linear.bias is not None:
+            with torch.no_grad():
+                m.bias.copy_(linear.bias)
+        return m
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (..., in) -> (..., out)
@@ -158,3 +176,225 @@ def sensitivity_profile(weights: List[torch.Tensor], chi_probe: int = 8,
         err = torch.linalg.norm(W - Wh) / (torch.linalg.norm(W) + 1e-12)
         scores.append(float(err))
     return scores
+
+
+# ======================================================================
+# QL2: interleaved TT-matrix (true MPO) layers
+# ----------------------------------------------------------------------
+# The row-bits-then-col-bits ordering above puts the whole (out | in) cut
+# on ONE bond, so chi caps the matrix rank of W -- at chi=32 a 1024x1024
+# weight becomes rank-32. The standard MPO (CompactifAI, TT-matrix) pairs
+# out-mode k with in-mode k on the same site: cores (r, o_k, i_k, r'),
+# and no single bond bounds the matrix rank.
+# ======================================================================
+def tt_factorize(n: int, d: int) -> List[int]:
+    """Split n into d balanced factors (pads n up when it factors badly)."""
+    def split(m):
+        fs, p, x = [], 2, m
+        while p * p <= x:
+            while x % p == 0:
+                fs.append(p); x //= p
+            p += 1
+        if x > 1:
+            fs.append(x)
+        out = [1] * d
+        for f in sorted(fs, reverse=True):     # greedy: largest into smallest bin
+            out[out.index(min(out))] *= f
+        return sorted(out)
+    ideal = n ** (1.0 / d)
+    m = n
+    while True:
+        fs = split(m)
+        if max(fs) <= 2.5 * ideal:
+            return fs
+        m += 1
+
+
+class TTLinear(torch.nn.Module):
+    """nn.Linear replacement with TT-matrix (interleaved MPO) weight."""
+
+    def __init__(self, in_features: int, out_features: int, d: int = 4,
+                 rank: int = 64, eps: float = 1e-3, bias: bool = True,
+                 weight: Optional[torch.Tensor] = None, device=None, dtype=None):
+        super().__init__()
+        self.in_features, self.out_features, self.d = in_features, out_features, d
+        self.in_modes = tt_factorize(in_features, d)
+        self.out_modes = tt_factorize(out_features, d)
+        if weight is None:
+            weight = torch.nn.Linear(in_features, out_features, bias=False,
+                                     device=device).weight.data
+        cores = tt_matrix_decompose(weight.float(), self.out_modes, self.in_modes,
+                                    rank, eps)
+        dt = dtype or weight.dtype
+        self.cores = torch.nn.ParameterList(
+            [torch.nn.Parameter(c.to(device=device, dtype=dt).contiguous())
+             for c in cores])
+        self.bias = torch.nn.Parameter(torch.zeros(out_features, device=device,
+                                                   dtype=dt)) if bias else None
+
+    @property
+    def ranks(self) -> List[int]:
+        return [c.shape[3] for c in self.cores[:-1]]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        lead = x.shape[:-1]
+        I = 1
+        for m in self.in_modes:
+            I *= m
+        xin = x.reshape(-1, x.shape[-1]).to(self.cores[0].dtype)
+        if xin.shape[-1] < I:
+            xin = torch.nn.functional.pad(xin, (0, I - xin.shape[-1]))
+        B = xin.shape[0]
+        t = xin.reshape(B, 1, 1, I)                 # (B, Oacc, r, Irest)
+        oacc = 1
+        for c in self.cores:                        # (r, o, i, s)
+            r, o, i, s = c.shape
+            t = t.reshape(B, oacc, r, i, -1)
+            t = torch.einsum('barix,rois->baosx', t, c)
+            oacc *= o
+            t = t.reshape(B, oacc, s, -1)
+        y = t.reshape(B, oacc)[:, :self.out_features]
+        if self.bias is not None:
+            y = y + self.bias
+        return y.reshape(*lead, self.out_features).to(x.dtype)
+
+    def effective_weight(self) -> torch.Tensor:
+        return tt_matrix_reconstruct(list(self.cores), self.out_modes,
+                                     self.in_modes)[:self.out_features,
+                                                    :self.in_features]
+
+
+def tt_matrix_decompose(W: torch.Tensor, out_modes: List[int],
+                        in_modes: List[int], rank: int = 64,
+                        eps: float = 1e-3) -> List[torch.Tensor]:
+    """TT-SVD of W (out, in) into cores (r, o_k, i_k, r'), adaptive eps."""
+    d = len(out_modes)
+    O, I = 1, 1
+    for m in out_modes:
+        O *= m
+    for m in in_modes:
+        I *= m
+    T = torch.zeros(O, I, dtype=W.dtype, device=W.device)
+    T[:W.shape[0], :W.shape[1]] = W
+    t = T.reshape(*out_modes, *in_modes)
+    perm = [p for k in range(d) for p in (k, d + k)]     # (o1,i1,o2,i2,...)
+    t = t.permute(*perm).contiguous()
+    # per-bond eps so the total discarded weight stays ~eps
+    eps_b = eps / max(d - 1, 1)
+    cores, r = [], 1
+    for k in range(d - 1):
+        t = t.reshape(r * out_modes[k] * in_modes[k], -1)
+        U, S, Vh = torch.linalg.svd(t, full_matrices=False)
+        chi = _adaptive_cut(S, eps_b, rank)
+        cores.append(U[:, :chi].reshape(r, out_modes[k], in_modes[k], chi))
+        t = S[:chi, None] * Vh[:chi]
+        r = chi
+    cores.append(t.reshape(r, out_modes[-1], in_modes[-1], 1))
+    return cores
+
+
+def tt_matrix_reconstruct(cores: List[torch.Tensor], out_modes: List[int],
+                          in_modes: List[int]) -> torch.Tensor:
+    t = cores[0]
+    for c in cores[1:]:
+        t = torch.einsum('...a,aoib->...oib', t, c)
+    d = len(cores)
+    t = t.reshape(*[m for k in range(d) for m in (out_modes[k], in_modes[k])])
+    t = t.permute(*range(0, 2 * d, 2), *range(1, 2 * d, 2))
+    O, I = 1, 1
+    for m in out_modes:
+        O *= m
+    for m in in_modes:
+        I *= m
+    return t.reshape(O, I)
+
+
+def tt_rel_error(W: torch.Tensor, d: int, rank: int, eps: float = 0.0):
+    """(relative Frobenius error, #params) of a TT-matrix fit -- for budgeting."""
+    om, im = tt_factorize(W.shape[0], d), tt_factorize(W.shape[1], d)
+    cores = tt_matrix_decompose(W.float(), om, im, rank, eps)
+    Wh = tt_matrix_reconstruct(cores, om, im)[:W.shape[0], :W.shape[1]]
+    err = torch.linalg.norm(W.float() - Wh) / (torch.linalg.norm(W.float()) + 1e-12)
+    return float(err), mpo_num_params(cores)
+
+
+# ======================================================================
+# QL2b: activation-whitened 2-site MPO (the practical default)
+# ----------------------------------------------------------------------
+# Measured on Qwen3-0.6B: raw-norm TT-matrix compression of trained
+# weights at -30% params sends WikiText-2 PPL 21.7 -> 7.5e5 and the
+# einsum chain trains at 0.12 it/s. Trained weights are NOT low-
+# entanglement in the raw Frobenius norm -- but they are in the norm the
+# network actually sees, ||W X||. Whitening with the calibration Gram
+# matrix (SVD-LLM, arXiv 2403.07378):
+#     X X^T = S S^T,   W S = U Sigma V^T,   W ~ (U_r Sigma_r)(V_r^T S^-1)
+# makes the truncation error EXACTLY the singular-value tail in the
+# output norm. The result is a 2-site MPO (out-site, in-site, bond r):
+# two dense GEMMs, faster than the dense layer when r < in*out/(in+out).
+# ======================================================================
+class LowRankLinear(torch.nn.Module):
+    """y = (x B^T) A^T + b  -- 2-site MPO with bond dimension `rank`."""
+
+    def __init__(self, A: torch.Tensor, B: torch.Tensor,
+                 bias: Optional[torch.Tensor] = None):
+        super().__init__()
+        self.A = torch.nn.Parameter(A.contiguous())        # (out, r)
+        self.B = torch.nn.Parameter(B.contiguous())        # (r, in)
+        self.bias = torch.nn.Parameter(bias.clone()) if bias is not None else None
+        self.in_features, self.out_features = B.shape[1], A.shape[0]
+
+    @property
+    def rank(self) -> int:
+        return self.B.shape[0]
+
+    def forward(self, x):
+        y = torch.nn.functional.linear(torch.nn.functional.linear(x, self.B), self.A)
+        return y + self.bias if self.bias is not None else y
+
+
+def whitened_svd(W: torch.Tensor, gram: torch.Tensor, damp: float = 1e-4):
+    """Returns (U Sigma^1/2, Sigma, Sigma^1/2 V^T S^-1) of W S, gram = S S^T.
+    The balanced split keeps both factors at the same scale for AdamW.
+    Output-norm error at rank r is sqrt(sum_{i>=r} Sigma_i^2)."""
+    W = W.double()
+    G = gram.double()
+    G = G + damp * G.diagonal().mean() * torch.eye(G.shape[0], dtype=G.dtype,
+                                                   device=G.device)
+    S = torch.linalg.cholesky(G)                            # lower, G = S S^T
+    U, Sig, Vh = torch.linalg.svd((W @ S).float(), full_matrices=False)  # fp32 SVD
+    U, Sig, Vh = U.double(), Sig.double(), Vh.double()
+    Bfull = torch.linalg.solve_triangular(S, Vh, upper=False, left=False)  # Vh S^-1
+    rs = Sig.sqrt()
+    return U * rs, Sig, rs[:, None] * Bfull
+
+
+def lowrank_from_svd(US, Bfull, rank, bias=None, dtype=torch.float32):
+    return LowRankLinear(US[:, :rank].to(dtype), Bfull[:rank].to(dtype),
+                         None if bias is None else bias.to(dtype))
+
+
+def compression_plan(model) -> dict:
+    """{qualified module name: [out, in, rank, has_bias]} for LowRankLinear."""
+    return {n: [m.out_features, m.in_features, m.rank, m.bias is not None]
+            for n, m in model.named_modules() if isinstance(m, LowRankLinear)}
+
+
+def save_compressed(model, model_id: str, path: str):
+    torch.save({'model_id': model_id, 'plan': compression_plan(model),
+                'state_dict': {k: v.detach().to(torch.bfloat16).cpu()
+                               for k, v in model.state_dict().items()}}, path)
+
+
+def load_compressed(path: str, device='cuda', dtype=torch.bfloat16):
+    """Rebuild a model saved by save_compressed (HF base + LowRankLinear)."""
+    from transformers import AutoModelForCausalLM
+    ck = torch.load(path, map_location='cpu', weights_only=False)
+    model = AutoModelForCausalLM.from_pretrained(ck['model_id'], dtype=dtype,
+                                                 attn_implementation="sdpa")
+    for name, (o, i, r, hb) in ck['plan'].items():
+        parent, _, child = name.rpartition('.')
+        setattr(model.get_submodule(parent), child,
+                LowRankLinear(torch.zeros(o, r, dtype=dtype), torch.zeros(r, i, dtype=dtype),
+                              torch.zeros(o, dtype=dtype) if hb else None))
+    model.load_state_dict(ck['state_dict'], strict=True)
+    return model.to(device).eval()

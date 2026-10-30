@@ -1,5 +1,11 @@
 # QL1.5 on RunPod — Quick Start
 
+> **All phases in one pod** (2026-10-28): `scripts/runpod_all_phases.sh` runs Phases
+> I–III validation, QL1–QL4 and uploads reports to `<hf-user>/qweave-runs`
+> (env `HF_TOKEN`; `QUICK=1` for a 20-minute smoke; `ONLY="stage …"` for a subset).
+> Measured results: [QL_RESULTS.md](QL_RESULTS.md). The defaults below are now
+> superseded by `--format wsvd` (activation-whitened) and `--lr 2e-5`.
+
 Goal: run the TN-compression heal fine-tune on a real 0.6B model with a
 rented GPU. Total cost estimate: **< US$1** (under 1 hour on an RTX 4090).
 
