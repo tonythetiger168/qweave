@@ -61,13 +61,19 @@ Leverages existing suite modules. All targets reproducible on 1–8 GPUs.
 - **Still open (moved to QL1.5)**: LoRA-style heal fine-tune on a real 0.6B model —
   needs GPU env (single 24GB card); see QL2.
 
-### QL1.5 — Heal Fine-tune ✅ READY (2026-10-28, awaiting GPU run)
-Delivered: `phase4_llm/heal_finetune.py` (sensitivity-ranked compression, PPL eval,
-AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
-`docs/QL1.5_RUNPOD.md` (RTX 4090, est. cost < $1). Smoke mode passes on CPU
-(heal improves PPL −2.4% on the tiny test model). Next: run on Qwen3-0.6B.
+### QL1.5 — Heal Fine-tune ✅ RUN on H100 (2026-10-28) — gate NOT met, see QL_RESULTS.md
+Run on Qwen3-0.6B via `scripts/runpod_all_phases.sh`. Raw-norm TT/MPO is
+unusable on trained weights (PPL → 7.5e5); the activation-whitened 2-site MPO
+(`--format wsvd`, default) + KD heal recovers 97–99 % of the gap. Out-of-domain
+(FineWeb-Edu heal): −11 % params → PPL +22 %, MMLU −13 pt, GSM8K −34 pt.
+The +3 % PPL gate is not met on a 0.6B model; follow-ups in
+[FERMIQLLM_SURPASS_PLAN.md](FERMIQLLM_SURPASS_PLAN.md) §QL5.
 
-### QL2 — CUDA Training at Scale + Annealing Optimizer (Month 2)
+### QL2 — CUDA Training at Scale + Annealing Optimizer (Month 2) ✅ MEASURED (2026-10-28)
+**Result**: TT layers 4–300× slower than cuBLAS; aligned low-rank 1.14× dense.
+Allocator: greedy 0.6–0.9 % from optimum vs SQA 19–32 % — annealing is the wrong
+tool for the separable allocation (`phase4_llm/anneal_alloc.py`, `bench_ql2.py`).
+FSDP / multi-GPU and the RL annealing variant move to QL7.
 **Goal**: make TN training fast and add the "quantum annealing" component — classically.
 - **Triton TN matmul kernel**: contracted MPO-core × activation without materializing the weight
   (the key to beating dense speed; Minima's stage-4 equivalent).
@@ -80,7 +86,10 @@ AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
 - **CUDA specifics**: bf16 params + fp32 MPO cores, CUDA graphs for the einsum chain, pin memory,
   overlap comm; benchmark matrix recorded in `docs/QL2_BENCHMARKS.md`.
 
-### QL3 — Entanglement Diagnostics & QSA Attention (Month 3)
+### QL3 — Entanglement Diagnostics & QSA Attention (Month 3) ✅ GATE PASSED (2026-10-28)
+**Result**: QSA top-16 at 16K: 1.49× vs FlashAttention-SDPA at +0.96 % PPL; 3.47× at
+32K (`phase4_llm/qsa_attention.py`, `bench_ql3.py`). Entanglement-adaptive budgets
+are a negative result (+6.9 % vs +3.8 % uniform).
 **Goal**: turn the physics metaphor into a measurable, useful mechanism.
 - Entanglement spectrum of attention maps: run attention matrices through `MPSCanonical`;
   rank-χ MPS fit of head activations; show which heads are low-entanglement (compressible).
@@ -88,7 +97,9 @@ AdamW heal, JSON report + acceptance gate) + `scripts/runpod_setup.sh` +
   implement as CUDA kernel (block-sparse flash attention variant).
 - Acceptance: ≥ 1.2× long-context (16K+) throughput at ≤ 1pt quality drop vs dense FA2 baseline.
 
-### QL4 — Open Benchmark & Reproducibility Harness (Month 4)
+### QL4 — Open Benchmark & Reproducibility Harness (Month 4) ✅ DELIVERED (2026-10-28)
+**Result**: `phase4_llm/eval/run_eval.py` (lm-eval-harness + char-noise and
+long-context drift suite); dense vs −11 %/−22 % tables in QL_RESULTS.md §4.
 **Goal**: publish what FermiQLLM didn't.
 - `phase4_llm/eval/`: LLM-eval-harness compatible runner (MMLU, GSM8K, MATH-500, BBH, GPQA-Diamond)
   + our own **QRB-style robustness suite** (input noise, prompt perturbation, long-context drift).
