@@ -63,6 +63,31 @@ to use those lessons to beat it **on public leaderboards** with equal compute.
 - Quantum-hardware interface: keep the Phase II DEM + PyMatching pipeline (now fixed) for future QPU subroutine experiments;
   until there is provable quantum advantage, always say *quantum-inspired*.
 
+### Additional items (2026-10-28, gaps found by checking FermiQLLM's five stages)
+
+FermiQLLM's "gauge degrees of freedom" and "data representation" stages are not yet
+covered by QL5–QL8, and the evaluation must avoid being pulled into an "accuracy race"
+we are not competing in.
+
+- **G1 — Gauge fixing (part of QL5):** an MPO / low-rank factorization has a gauge
+  freedom on every bond (an `A·A⁻¹` can be inserted). Fix it to canonical form with QR
+  sweeps (porting `MPSCanonical`) and balance the core scales in whitened coordinates.
+  Acceptance: heal needs ≤0.8× the steps to reach the same PPL as the free gauge, *or*
+  the PPL gap after stacking INT8/FP8 shrinks by ≥20%; if neither holds, report it as a
+  negative result. This turns the other side's unexplained term into a testable claim.
+- **D1 — Data representation: embedding / LM-head compression (part of QL5):** Qwen3-0.6B's
+  151,936 × 1,024 embedding is about 26% of its parameters. Following F1/F2, do not use
+  raw-norm TT; use **token-frequency-weighted** low rank (the embedding-layer equivalent of
+  activation whitening) with one shared factorization for the tied head. Acceptance:
+  ≥2× compression of that matrix with out-of-domain MMLU −≤1 pt.
+- **E2 — Quality–compression Pareto (part of QL8):** FermiQLLM claims an **accuracy gain**,
+  while TN compression inherently trades accuracy for efficiency. Present the comparison as
+  Pareto curves (params / tok/s / VRAM vs score) rather than one headline number; any claimed
+  "gain" needs ≥3 seeds and a paired-bootstrap confidence interval.
+- **Named baselines (required in the QL8 comparison table):** uncompressed Qwen3-0.6B/4B-Base,
+  a dense model fine-tuned with the same recipe (F3), a plain truncated-SVD control with the
+  same parameter count, and published CompactifAI / Minima numbers (where comparable).
+
 ## 4. Why this can "surpass" it
 
 1. **Verifiable:** FermiQLLM has 0 papers, 0 weights, 0 third-party reproductions. Every number of ours comes with a command and JSON.
