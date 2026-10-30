@@ -194,6 +194,36 @@ step of the target's argmax under teacher forcing. The gate now uses
 gap of each emitted token, compared with plain greedy's own gaps. The 4B rows
 above need a rerun to get those numbers.
 
+## Stage L: 4B speculative rerun (1× H100 SXM, 2026-10-30)
+
+Raw: HF `chienhsinlin/qweave-runs`, `runs/7jcwnq6gkx9ppk_ql6/stageL`. CUDA graphs,
+24 prompts × 256 tokens, draft Qwen3-0.6B-Base, γ = 5.
+
+| row | result |
+|---|---|
+| dense | 160.8 tok/s |
+| speculative | **0.81× [0.75, 0.88]**, α 0.59, 3.9 tokens per target call, draft cost c = 0.41 |
+| standard formula with those α and c | 0.76× |
+| HF assisted generation | 0.58× |
+| lossless | every token within one bf16 step of the target's argmax (spec and greedy alike) |
+
+Stage S's 1.21× did not reproduce. The measured speedup now agrees with the
+formula. A 0.6B draft costs ~0.4 of a 4B step at batch 1 because both are
+launch-bound (28 vs 36 layers, similar kernels per layer), and at c ≈ 0.4
+speculative decoding cannot pay off at α ≈ 0.6. **Route L2 in this engine is a
+negative result.**
+
+Three harness bugs that this run exposed are fixed in this PR:
+- only the last γ produced a row (stage S's "missing γ=3" was this bug, not the cap);
+- greedy reference, draft cost and speculative time came from different compile
+  sessions and draft cost from 4 prompts; now all three are timed per γ in one
+  session (stage S's 1.21× probably came from this);
+- the "fp32" check ran with TF32 on (main enables it), which is why fp32
+  agreement was 0.89; it now disables TF32 and records the fp32 logit gap at
+  every divergence, so a remaining flip is shown to be a tie or not;
+- (also) the smoke prefill used 32-token QSA blocks, which flex attention
+  rejects on CUDA.
+
 ## Stage K: Triton low-rank decode kernels (code ready, not run)
 
 Stage S showed the problem is not bytes but kernels. Dense 0.6B under CUDA

@@ -690,17 +690,34 @@ def lossless_report(target, draft, greedy_fn, spec_fn, prompts, new_tokens, engi
                tf_max_gap_spec=round(float(gs.max()), 4),
                tf_max_gap_greedy=round(float(gg.max()), 4), tol=tol)
     dt = next(target.parameters()).dtype
-    if dt != torch.float32:
-        try:
+    tf32 = (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32)
+    try:
+        # "fp32" must mean fp32: main() enables TF32 (10-bit mantissa), which
+        # brings the near-tie flips back (stage L: 0.89 with TF32 on)
+        torch.backends.cuda.matmul.allow_tf32 = torch.backends.cudnn.allow_tf32 = False
+        if dt != torch.float32:
             target.float(); draft.float()
-            g32, s32, _ = spec_engine(target, draft, 'eager' if engine == 'eager' else 'static',
-                                      max(p.shape[1] for p in ps) + new_tokens + 16, (8,))
-            sp = getattr(spec_fn, 'gamma', 4)
-            out['fp32'] = lossless_check(g32, lambda i, n: s32(i, n, sp), ps, new_tokens)
-        finally:
-            target.to(dt); draft.to(dt)
-    else:
-        out['fp32'] = out['prefix_bf16']
+        g32, s32, _ = spec_engine(target, draft, 'eager' if engine == 'eager' else 'static',
+                                  max(p.shape[1] for p in ps) + new_tokens + 16, (8,))
+        gm = getattr(spec_fn, 'gamma', 4)
+        same = tot = 0
+        div = []
+        for ids in ps:
+            L = ids.shape[1]
+            ref = g32(ids, new_tokens)
+            got = s32(ids, new_tokens, gm)[0]
+            k = min(ref.shape[1], got.shape[1]) - L
+            bad = (ref[0, L:L + k] != got[0, L:L + k]).nonzero()
+            j = k if len(bad) == 0 else int(bad[0])
+            same += j; tot += k
+            if j < k:     # fp32 logit gap between the two candidate tokens at the split
+                lg = target(ref[:, :L + j]).logits[0, -1].float()
+                div.append(round(abs(float(lg[ref[0, L + j]] - lg[got[0, L + j]])), 6))
+        out['fp32'] = same / max(1, tot)
+        out['fp32_divergence_gaps'] = div
+    finally:
+        torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32 = tf32
+        target.to(dt); draft.to(dt)
     return out
 
 
@@ -751,7 +768,8 @@ def gate(report: dict) -> dict:
         lossless = row.get('route') == 'L2'
         if lossless and 'lossless' in row:
             ll = row['lossless']                     # see lossless_report
-            quality_ok = ll['fp32'] >= 0.99 and \
+            fp32_ok = ll['fp32'] >= 0.99 or all(g < 1e-3 for g in ll.get('fp32_divergence_gaps', [1]))
+            quality_ok = fp32_ok and \
                 ll['tf_within_spec'] >= min(0.99, ll['tf_within_greedy'] - 0.005)
         elif lossless:
             quality_ok = row.get('agreement', 0) >= 0.99
@@ -852,7 +870,8 @@ def main():
         load_base = lambda: tiny_qwen3(V, tie=False).to(dev, dtype).eval()   # tied random = copy input
         tok = None
         args.new_tokens, args.n_prompts, args.repeats = min(args.new_tokens, 16), min(args.n_prompts, 4), 1
-        args.rank_align, args.engines, args.prefill = 8, 'eager', '256'
+        args.rank_align, args.engines = 8, 'eager'
+        args.prefill = '512' if dev.type == 'cuda' else '256'   # flex: >= 4 blocks of 128
         prompts = [torch.randint(1, V, (1, 12 + 3 * i), generator=torch.Generator().manual_seed(i)).to(dev)
                    for i in range(args.n_prompts)]
         print("[ql6] smoke: tiny random Qwen3 (no downloads)")
@@ -969,25 +988,22 @@ def main():
                 if args.triton and d.endswith('.pt') and tri_ok:
                     fuse_siblings_(dm); use_triton_(dm)
             for engine in l2_engines:
-                try:
-                    greedy_fn, spec_fn, dgreedy = spec_engine(
-                        target, dm, engine, max_len + max(gammas) + 2, gammas)
-                    ref, _ = time_full(greedy_fn, prompts, args.new_tokens, dev)
-                    dref, _ = time_full(dgreedy, prompts[:4], args.new_tokens, dev)
-                    c = float(np.mean(dref)) / float(np.mean(ref[:4]))
-                    for gm in gammas:
+                for gm in gammas:
+                    # fresh engine per gamma: greedy reference, draft cost and spec are
+                    # timed in the same compiled session; lossless_report runs last
+                    # because its fp32 cast invalidates the CUDA graphs
+                    try:
+                        greedy_fn, spec_fn, dgreedy = spec_engine(
+                            target, dm, engine, max_len + gm + 2, (gm,))
                         sp = lambda ids, n, gm=gm: spec_fn(ids, n, gm)
                         sp.gamma = gm
+                        ref, _ = time_full(greedy_fn, prompts, args.new_tokens, dev)
+                        dref, _ = time_full(dgreedy, prompts, args.new_tokens, dev)
+                        per, st = time_full(sp, prompts, args.new_tokens, dev)
+                        c = float(np.mean(dref)) / float(np.mean(ref))
                         ll = lossless_report(target, dm, greedy_fn, sp,
                                              prompts[:min(8, len(prompts))],
                                              min(args.new_tokens, 128), engine)
-                        if engine == 'compiled':      # the fp32 cast invalidates graphs
-                            torch._dynamo.reset()
-                            greedy_fn, spec_fn, dgreedy = spec_engine(
-                                target, dm, engine, max_len + max(gammas) + 2, gammas)
-                            sp = lambda ids, n, gm=gm: spec_fn(ids, n, gm)
-                            time_full(greedy_fn, prompts[:2], args.new_tokens, dev, warm=0)
-                        per, st = time_full(sp, prompts, args.new_tokens, dev)
                         alpha = float(np.mean([x['alpha'] for x in st]))
                         tpc = float(np.mean([x['tokens_per_target_call'] for x in st]))
                         s_, lo, hi = ratio_ci(ref, per)
@@ -995,19 +1011,21 @@ def main():
                                'draft': d, 'gamma': gm, 'alpha': round(alpha, 3),
                                'tokens_per_target_call': round(tpc, 2),
                                'draft_cost_c': round(c, 3),
+                               'dense_tok_s': round(1 / float(np.mean(ref)), 1),
+                               'draft_tok_s': round(1 / float(np.mean(dref)), 1),
                                'predicted': round(spec_speedup(alpha, gm, c), 3),
                                'agreement': round(ll['prefix_bf16'], 4), 'lossless': ll,
                                'speedup': round(s_, 3),
                                'ci95': [round(lo, 3), round(hi, 3)]}
-                except Exception as e:
-                    row = {'variant': f'spec:{d}', 'engine': engine, 'route': 'L2',
-                           'error': f"{type(e).__name__}: {str(e)[:300]}"}
-                report['spec'].append(row)
-                if 'error' not in row:
-                    report['decode'].append(row)
-                print("[ql6] spec", row, flush=True)
-                if dev.type == 'cuda':
-                    torch._dynamo.reset(); torch.cuda.empty_cache()
+                    except Exception as e:
+                        row = {'variant': f'spec:{d}:g{gm}', 'engine': engine, 'route': 'L2',
+                               'error': f"{type(e).__name__}: {str(e)[:300]}"}
+                    report['spec'].append(row)
+                    if 'error' not in row:
+                        report['decode'].append(row)
+                    print("[ql6] spec", row, flush=True)
+                    if dev.type == 'cuda':
+                        torch._dynamo.reset(); torch.cuda.empty_cache()
             del dm
         # HF built-in assisted generation (eager): named baseline for our loop
         if not args.smoke:
@@ -1031,8 +1049,8 @@ def main():
     if args.prefill:
         from phase4_llm.qsa_attention import QSA_CFG
         QSA_CFG['topk'] = args.qsa_topk
-        if args.smoke:
-            QSA_CFG.update(block=32, min_len=64)
+        if args.smoke:      # flex_attention (CUDA) needs block sizes of 128
+            QSA_CFG.update(block=128 if dev.type == 'cuda' else 32, min_len=64)
         m = load_base()
         for n in [int(x) for x in args.prefill.split(',')]:
             res = {'tokens': n}

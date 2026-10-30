@@ -276,6 +276,9 @@ with tempfile.TemporaryDirectory() as tdir:
           str([d.get('error') for d in rep.get('decode', []) if 'error' in d])[:300])
     check("speculative rows lossless with alpha in [0, 1]", ok and rep['spec'] and all(
         s['agreement'] == 1.0 and 0 <= s['alpha'] <= 1 for s in rep['spec']))
+    check("one speculative row per draft x engine x gamma (stage S/L kept only the last gamma)",
+          ok and len([x for x in rep['spec'] if 'error' not in x]) == 2 * 2 * 2
+          and {x['gamma'] for x in rep['spec']} == {3, 5})
     check("self-draft alpha = 1", ok and any(s['draft'] == 'self' and s['alpha'] == 1.0
                                              for s in rep['spec']))
     check("prefill dense vs QSA timed", ok and rep['prefill'] and 'speedup' in rep['prefill'][0],
