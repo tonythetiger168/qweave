@@ -10,6 +10,8 @@
 #            8K/16K/32K; vLLM dense reference in its own venv.
 #   STAGE=Q  same measurements on QL5's real models (needs QL5_DIR, i.e. run on
 #            the QL5 pod after its stage A, ~1 h extra)
+#   STAGE=L  4B lossless speculative decoding rows only, with the fp32 lossless
+#            report (~45 min, ~US$4; run with VLLM=0)
 #   STAGE=K  Triton low-rank decode kernels (ql6_kernels.py) after stage S
 #            showed torch low rank slower than dense: per-layer latency
 #            microbench, 0.6B + 4B decode with/without kernels (CUDA graphs
@@ -97,7 +99,12 @@ else
   COMMON="--n-prompts 24 --new-tokens 256 --repeats 2"; PF=8192,16384,32768; HEAL=20e6
 fi
 
-if [ "$STAGE" = K ]; then
+if [ "$STAGE" = L ]; then
+  # 4B lossless speculative decoding only (stage S rows rerun with lossless_report):
+  # Qwen3-0.6B-Base draft, CUDA graphs, no low-rank/INT8/prefill rows (~45 min, ~US$4)
+  step L1_4b python $D --model $M4 $COMMON --synthetic-keep "" --engines compiled \
+      --prefill "" --drafts $M06 --gamma 3,4,5 --out $OUT/l4b
+elif [ "$STAGE" = K ]; then
   KC=$([ "$Q" = 1 ] && echo "$COMMON" || echo "--n-prompts 12 --new-tokens 256 --repeats 1")
   step K0_draft06 python phase4_llm/ql5_compress.py --model $M06 --total-saving 0.2 \
       --embed-keep 0.5 --heal-tokens $HEAL --batch 16 --save-model --out $OUT/draft06
