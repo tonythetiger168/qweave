@@ -23,6 +23,7 @@ dev = [
     "qiskit-aer>=0.13",
     "stim>=1.12",
     "pymatching>=2.0",
+    "ldpc>=2.0",
     "torch>=2.0",
 ]
 all = ["qweave[dev]"]

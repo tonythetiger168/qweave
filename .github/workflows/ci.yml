@@ -25,5 +25,7 @@ jobs:
         run: python phase2_noise/validate_p0b.py
       - name: Phase C validation (27 checks: backends/MPS/IPEA/VQE/torch)
         run: python phase3_scale/validate_p0c.py
+      - name: Phase E1 validation (QEC: rotated surface code threshold, gross code, BP+OSD)
+        run: python phase2_noise/validate_e1.py
       - name: CLI smoke test
         run: qweave --phase 1
