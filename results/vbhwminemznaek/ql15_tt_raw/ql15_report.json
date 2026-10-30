@@ -1,0 +1,42 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "format": "tt",
+  "d": 4,
+  "ratios": null,
+  "ranks_chosen": null,
+  "ranks": "16,32,64,128,256",
+  "target_saving": 0.3,
+  "chi": 32,
+  "eps": 0.001,
+  "alloc": "greedy",
+  "distill": false,
+  "steps": 100,
+  "batch": 8,
+  "seq": 512,
+  "compressed_layers": 73,
+  "candidate_layers": 196,
+  "params_total_before": 596049920,
+  "params_total_after": 463547584,
+  "param_saving_pct": 22.23,
+  "candidate_saving_pct": 30.09,
+  "ppl_dense": 21.7371,
+  "ppl_compressed": 747971.2152,
+  "ppl_healed": 461.1578,
+  "ppl_relative_increase_pct": 2021.53,
+  "heal_recovery_pct": 99.9,
+  "peak_vram_gb": 29.59,
+  "train_tokens_per_s": 505.4,
+  "train_time_s": 812.1,
+  "device": "cuda",
+  "allocation": {
+    "greedy": {
+      "err": 32.64225769042969,
+      "params": 307899584.0
+    },
+    "exact_dp": {
+      "err": 32.66859817504883,
+      "params": 307830016.0
+    },
+    "best": "greedy"
+  }
+}

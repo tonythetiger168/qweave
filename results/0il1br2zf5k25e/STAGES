@@ -1,0 +1,8 @@
+ql2_layers rc=0 wall=52s
+ql15_s30_kd rc=0 wall=457s
+ql15_dense_ft rc=0 wall=300s
+ql15_s15_kd rc=0 wall=439s
+ql15_s20_kd rc=0 wall=442s
+ql3_bench rc=0 wall=162s
+ql4_eval rc=0 wall=1023s
+ql4_eval_s15 rc=0 wall=356s

@@ -1,0 +1,52 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "format": "wsvd",
+  "d": 4,
+  "ratios": "0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85",
+  "ranks_chosen": [
+    56,
+    56,
+    66,
+    76
+  ],
+  "ranks": "16,32,64,128,256",
+  "target_saving": 0.3,
+  "chi": 32,
+  "eps": 0.001,
+  "alloc": "sqa",
+  "distill": false,
+  "steps": 30,
+  "batch": 4,
+  "seq": 512,
+  "compressed_layers": 4,
+  "candidate_layers": 8,
+  "params_total_before": 841728,
+  "params_total_after": 742144,
+  "param_saving_pct": 11.83,
+  "candidate_saving_pct": 30.39,
+  "ppl_dense": 2300.3731,
+  "ppl_compressed": 2244.9216,
+  "ppl_healed": 2390.4383,
+  "ppl_relative_increase_pct": 3.92,
+  "heal_recovery_pct": -14551667811855.3,
+  "peak_vram_gb": 0.23,
+  "train_tokens_per_s": 195521.3,
+  "train_time_s": 0.3,
+  "device": "cuda",
+  "allocation": {
+    "greedy": {
+      "err": 0.5793583989143372,
+      "params": 228096.0
+    },
+    "sqa": {
+      "err": 0.5793583989143372,
+      "params": 228096.0,
+      "seconds": 1.41
+    },
+    "exact_dp": {
+      "err": 0.5793583989143372,
+      "params": 228096.0
+    },
+    "best": "exact_dp"
+  }
+}

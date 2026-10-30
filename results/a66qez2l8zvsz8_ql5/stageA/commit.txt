@@ -1,0 +1,1 @@
+79b4fb1 ql5_compress: exit via os._exit after main to avoid rc=134 at shutdown
