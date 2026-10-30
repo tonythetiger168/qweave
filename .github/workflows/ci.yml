@@ -21,11 +21,11 @@ jobs:
         run: pip install -e .[dev]
       - name: P0 engine validation (14 checks, incl. Stim gold standard)
         run: python phase1_basic/validate_p0.py
-      - name: Phase B validation (22 checks: IR/QASM, trajectory, DEM+PyMatching)
+      - name: "Phase B validation (22 checks: IR/QASM, trajectory, DEM+PyMatching)"
         run: python phase2_noise/validate_p0b.py
-      - name: Phase C validation (27 checks: backends/MPS/IPEA/VQE/torch)
+      - name: "Phase C validation (27 checks: backends/MPS/IPEA/VQE/torch)"
         run: python phase3_scale/validate_p0c.py
-      - name: Phase E1 validation (QEC: rotated surface code threshold, gross code, BP+OSD)
+      - name: "Phase E1 validation (QEC: rotated surface code threshold, gross code, BP+OSD)"
         run: python phase2_noise/validate_e1.py
       - name: CLI smoke test
         run: qweave --phase 1
