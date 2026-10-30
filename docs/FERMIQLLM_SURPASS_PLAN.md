@@ -1,79 +1,81 @@
-# 超越 FermiQLLM 1.0 — 改進計畫 (Surpass Plan)
+# Surpassing FermiQLLM 1.0 — Improvement Plan
 
-> 2026-10-28 · 依據：[QL_RESULTS.md](QL_RESULTS.md)（H100 實測）、
-> [FERMIQLLM_GLOBAL_INVESTIGATION.md](FERMIQLLM_GLOBAL_INVESTIGATION.md)、
-> [QUANTUM_LLM_ROADMAP.md](QUANTUM_LLM_ROADMAP.md)。
+> 2026-10-28 · Based on: [QL_RESULTS.md](QL_RESULTS.md) (measured on H100),
+> [FERMIQLLM_GLOBAL_INVESTIGATION.md](FERMIQLLM_GLOBAL_INVESTIGATION.md),
+> [QUANTUM_LLM_ROADMAP.md](QUANTUM_LLM_ROADMAP.md).
 
-## 0. 一句話
+## 0. In one sentence
 
-FermiQLLM 1.0 的五個「量子增強」環節只有公司內測數字。qweave 已把同一套技術
-（張量網絡壓縮、量子模擬退火、糾纏啟發的結構）在 **Qwen3 同家族基座**上
-**實測、公開、含負面結果**。下一步是用這些實測教訓，在**公開榜單**上以同等算力超過它。
+FermiQLLM 1.0's five "quantum-enhanced" stages are backed only by the company's
+internal numbers. qweave has taken the same techniques (tensor-network compression,
+simulated quantum annealing, entanglement-inspired structure) and **measured them on
+the same Qwen3 base family, in public, negative results included**. The next step is
+to use those lessons to beat it **on public leaderboards** with equal compute.
 
-## 1. 實測後我們知道的事（2026-10-28，1× H100，約 US$25）
+## 1. What the measurements taught us (2026-10-28, 1× H100, ~US$25)
 
-| # | 發現 | 數據 | 對 FermiQLLM 主張的意義 |
+| # | Finding | Data | What it means for FermiQLLM's claims |
 |---|---|---|---|
-| F1 | 原始範數下的 TN/MPO 壓縮不能用於已訓練權重 | 舊 MPO：PPL 21.7 → 755 084；TT-matrix：→ 747 971，訓練慢 34× | 「張量網絡嵌入模型結構」若不做激活感知，是 PR 不是工程 |
-| F2 | 激活白化的 2-site MPO（SVD-LLM 式）才可行 | −30% 候選參數：PPL 199 → heal 後恢復 97–99% 差距 | 真正的技術核心是**激活感知低秩 + 蒸餾修復** |
-| F3 | 領域內 heal 會讓壓縮模型「看起來比原模型好」 | WikiText heal：17.0 < dense 21.7；但 dense 同資料微調 150 步即 13.7 | 「比同參數模型強 +10–20%」若沒對**同配方微調的 dense**比較，可能只是領域適應 |
-| F4 | PPL 掩蓋推理能力崩潰 | −11% 參數：PPL +16%，常識題持平，**MMLU −13pt、GSM8K −34pt** | MATH-500 / GPQA 宣稱必須公開逐題結果；小模型壓縮最先傷的就是數學與知識 |
-| F5 | 「量子退火」對可分離的秩分配是錯工具 | greedy 距下界 0.6–0.9%（0.02 s）；SA 6–8%；SQA 19–32%（45 s） | 退火只在**有層間交互**的目標上才可能有價值，需實證 |
-| F6 | 低秩層只有在秩對齊 tensor core 時才更快 | r=384：1.14× dense；r=477：0.39× | 「推理 +15%」取決於 kernel 細節，不是物理 |
-| F7 | 量子啟發稀疏注意力在長上下文確實有效 | 16K：1.49×、PPL +0.96%；32K：3.47× | 這是 FermiQLLM **沒提**、而我們已過驗收門檻的方向 |
-| F8 | 「糾纏熵決定稀疏預算」是負面結果 | 自適應 +6.9% vs 均勻 +3.8%（同平均 k） | 物理隱喻需實測，不能當設計原則直接用 |
+| F1 | Raw-norm TN/MPO compression does not work on trained weights | Legacy MPO: PPL 21.7 → 755,084; TT-matrix: → 747,971, and training is 34× slower | "Tensor networks embedded in the model structure" without activation awareness is PR, not engineering |
+| F2 | Only activation-whitened 2-site MPO (SVD-LLM style) is viable | −30% of candidate params: PPL 199 → heal recovers 97–99% of the gap | The real technical core is **activation-aware low rank + distillation heal** |
+| F3 | In-domain heal makes a compressed model "look better than the original" | WikiText heal: 17.0 < dense 21.7; but dense fine-tuned on the same data for 150 steps reaches 13.7 | "+10–20% over same-size models" may just be domain adaptation unless compared with **a dense model fine-tuned with the same recipe** |
+| F4 | PPL hides the collapse of reasoning | −11% params: PPL +16%, commonsense flat, **MMLU −13 pt, GSM8K −34 pt** | MATH-500 / GPQA claims must publish per-question results; compressing a small model hurts math and knowledge first |
+| F5 | "Quantum annealing" is the wrong tool for separable rank allocation | greedy 0.6–0.9% from the lower bound (0.02 s); SA 6–8%; SQA 19–32% (45 s) | Annealing can only add value on objectives **with interactions between layers**, and that must be shown |
+| F6 | Low-rank layers are faster only when the rank is aligned to tensor cores | r=384: 1.14× dense; r=477: 0.39× | "+15% inference" depends on kernel details, not physics |
+| F7 | Quantum-inspired sparse attention really works at long context | 16K: 1.49×, PPL +0.96%; 32K: 3.47× | A direction FermiQLLM **does not claim**, and one where we already pass the gate |
+| F8 | "Entanglement entropy sets the sparsity budget" is a negative result | adaptive +6.9% vs uniform +3.8% (same mean k) | Physics metaphors must be measured, not used directly as design rules |
 
-## 2. 逐環節：FermiQLLM 主張 → qweave 現況 → 超越目標
+## 2. Stage by stage: FermiQLLM claim → qweave today → target to beat it
 
-| 環節 | FermiQLLM 1.0 | qweave 現況（已實測） | 超越目標（可驗證） |
+| Stage | FermiQLLM 1.0 | qweave today (measured) | Target (verifiable) |
 |---|---|---|---|
-| 模型結構 | TN 嵌入，推理 +15% | wsvd 2-site MPO，秩對齊；TT/MPO 負面結果公開 | QL5/QL6：−25% 參數、MMLU −≤1pt、decode ≥1.3× |
-| 量子退火 | 用於優化 | SQA/SA/greedy/DP 全比較，結論：可分離問題用 DP/greedy | QL7：只在有交互項的目標上用，並與 greedy 對打 |
-| 訓練/RL | RL 成本 −25% | 蒸餾 heal，TN-only heal VRAM −29% | QL7：GRPO 同分數下 GPU-hours ≤0.75× |
-| 注意力 | 未提 | QSA 16K 1.49× @ +0.96% PPL（過門檻） | QL6：整合 vLLM prefill，32K+ ≥2× |
-| 評測 | 內測 +10–20%，無權重 | lm-eval + 魯棒性套件，JSON 全公開 | QL8：公開榜單 + 權重 + 一鍵復現 |
+| Model structure | TN embedded, inference +15% | wsvd 2-site MPO with aligned ranks; TT/MPO negative results published | QL5/QL6: −25% params, MMLU −≤1 pt, decode ≥1.3× |
+| Quantum annealing | Used for optimization | SQA / SA / greedy / DP fully compared; conclusion: use DP/greedy for separable problems | QL7: use it only on objectives with interaction terms, head-to-head with greedy |
+| Training / RL | RL cost −25% | Distillation heal; TN-only heal uses 29% less VRAM | QL7: GRPO at the same score with ≤0.75× GPU-hours |
+| Attention | Not mentioned | QSA 1.49× at 16K with +0.96% PPL (gate passed) | QL6: integrate into vLLM prefill, ≥2× at 32K+ |
+| Evaluation | Internal +10–20%, no weights | lm-eval + robustness suite, all JSON public | QL8: public leaderboards + weights + one-command reproduction |
 
-## 3. 改進計畫（QL5–QL8），每項都由實測教訓推導
+## 3. Improvement plan (QL5–QL8), each item derived from a measured lesson
 
-### QL5 — 保住知識與推理（修 F3/F4）
-- **基座**：改用 `Qwen3-0.6B-Base` / `Qwen3-4B-Base` 做 PPL 參考（chat 模型微調會自降 PPL，見 F3）。
-- **知識感知敏感度**：校準集混入 MMLU 式知識文本與 GSM8K 式推理鏈（不與評測重疊），
-  秩分配目標從「激活誤差」改為「激活誤差 × 層的 Fisher 重要度」。
-- **更長 heal**：≥100M tokens（目前 6M）、KD 溫度/比例掃描、對推理資料加權。
-- **組合量化**：低秩 + INT8/FP8（小模型的 Pareto 前沿通常由量化主導，低秩要與之疊加才有意義）。
-- **驗收**（out-of-domain）：−20% 參數時 MMLU −≤2pt、GSM8K −≤5pt；dense 同配方微調作對照。
-- 成本：4× H100，約 US$300–600。
+### QL5 — Keep knowledge and reasoning (fixes F3/F4)
+- **Base model:** use `Qwen3-0.6B-Base` / `Qwen3-4B-Base` as the PPL reference (fine-tuning the chat model lowers its PPL by itself, see F3).
+- **Knowledge-aware sensitivity:** mix MMLU-style knowledge text and GSM8K-style reasoning chains into calibration (no overlap with the eval sets),
+  and change the rank-allocation objective from "activation error" to "activation error × the layer's Fisher importance".
+- **Longer heal:** ≥100M tokens (currently 6M), sweep KD temperature and mix ratio, upweight reasoning data.
+- **Combine with quantization:** low rank + INT8/FP8 (for small models the Pareto front is usually set by quantization, so low rank only matters stacked on top of it).
+- **Acceptance** (out-of-domain): at −20% params, MMLU −≤2 pt and GSM8K −≤5 pt, with a dense model fine-tuned with the same recipe as the control.
+- Cost: 4× H100, about US$300–600.
 
-### QL6 — 真的變快（修 F6，放大 F7）
-- 秩一律對齊 64/128（已實作 `--rank-align`），融合 `x·Bᵀ·Aᵀ` 為單一 Triton kernel。
-- batch=1 decode（記憶體頻寬受限）量測 tokens/s：這是低秩/TN 唯一天然佔優的場景。
-- QSA 接入 vLLM 長上下文 prefill；用 top-16 預設（16K +0.96% PPL）。
-- **驗收**：decode ≥1.3× dense（對 FermiQLLM「推理 +15%」），32K prefill ≥2×。
+### QL6 — Actually get faster (fixes F6, builds on F7)
+- Always align ranks to 64/128 (implemented as `--rank-align`), and fuse `x·Bᵀ·Aᵀ` into one Triton kernel.
+- Measure tokens/s for batch-1 decode (memory-bandwidth bound): the only regime where low rank / TN has a natural advantage.
+- Wire QSA into vLLM long-context prefill, with top-16 as the default (16K: +0.96% PPL).
+- **Acceptance:** decode ≥1.3× dense (vs FermiQLLM's "inference +15%"), 32K prefill ≥2×.
 
-### QL7 — 把「量子退火」放到對的問題上（修 F5/F8）
-- 先量測層間交互：Hessian 交叉項 / 成對壓縮的非可加 PPL 變化；只有交互顯著時才用 SQA。
-- RL：GRPO 中「本步更新哪些層/秩方向」寫成帶交互項的 QUBO，SQA vs greedy vs 全量 AdamW 對打。
-- **驗收**：同最終分數下 GPU-hours ≤0.75×，否則公布為負面結果。
+### QL7 — Put "quantum annealing" on the right problem (fixes F5/F8)
+- First measure interactions between layers: Hessian cross terms / non-additive PPL changes from compressing pairs of layers; use SQA only where interactions are significant.
+- RL: in GRPO, write "which layers / rank directions to update this step" as a QUBO with interaction terms, and run SQA vs greedy vs full AdamW head-to-head.
+- **Acceptance:** ≤0.75× GPU-hours at the same final score; otherwise publish it as a negative result.
 
-### QL8 — 公開、可復現、上榜
-- 權重、配置、log 全上 HF；`scripts/runpod_all_phases.sh` 一條指令重跑。
-- 提交 Open LLM Leaderboard 類公開評測；附 FermiQLLM 公開資料的逐項對照表。
-- 量子硬體接口：Phase II 的 DEM + PyMatching 管線（已修復）保留給未來 QPU 子程序實驗；
-  在出現可證明量子優勢前，一律稱 *quantum-inspired*。
+### QL8 — Public, reproducible, on the leaderboards
+- Weights, configs and logs all on HF; `scripts/runpod_all_phases.sh` reruns everything with one command.
+- Submit to public evaluations such as the Open LLM Leaderboard, with an item-by-item comparison against FermiQLLM's public material.
+- Quantum-hardware interface: keep the Phase II DEM + PyMatching pipeline (now fixed) for future QPU subroutine experiments;
+  until there is provable quantum advantage, always say *quantum-inspired*.
 
-## 4. 為什麼這樣能「超越」
+## 4. Why this can "surpass" it
 
-1. **可驗證**：FermiQLLM 0 論文、0 權重、0 第三方復現。我們每個數字都有指令與 JSON。
-2. **同基座、同配方對照**：F3 證明「比同參數模型強」很容易是領域適應造成的錯覺，我們把對照組做對。
-3. **公布負面結果**：F1、F5、F8 正是「量子」敘事最容易誇大的地方，公開它們是可信度的護城河。
-4. **已有一項過門檻的新方向**（F7, QSA），是 FermiQLLM 未主張的。
+1. **Verifiable:** FermiQLLM has 0 papers, 0 weights, 0 third-party reproductions. Every number of ours comes with a command and JSON.
+2. **Same base, same-recipe controls:** F3 shows that "stronger than same-size models" is easily an illusion caused by domain adaptation; we get the control right.
+3. **Negative results published:** F1, F5 and F8 are exactly where "quantum" narratives exaggerate most; publishing them is our credibility moat.
+4. **A new direction that already passes its gate** (F7, QSA), which FermiQLLM does not claim.
 
-## 5. 時程與成本
+## 5. Timeline and cost
 
-| 階段 | 硬體 | 估計成本 | 時程 |
+| Stage | Hardware | Estimated cost | Duration |
 |---|---|---|---|
-| QL1.5–QL4（本 PR，0.6B，已完成） | 1× H100 | ~US$25 | 完成 |
-| QL5 知識保留 + 4B | 4× H100 | US$300–600 | 2–3 週 |
-| QL6 kernel + vLLM | 1× H100 | ~US$50 | 2 週 |
-| QL7 RL + 交互式 QUBO | 4× H100 | ~US$500 | 3–4 週 |
-| QL8 公開榜單 | — | 小 | 持續 |
+| QL1.5–QL4 (this PR, 0.6B, done) | 1× H100 | ~US$25 | Done |
+| QL5 knowledge preservation + 4B | 4× H100 | US$300–600 | 2–3 weeks |
+| QL6 kernels + vLLM | 1× H100 | ~US$50 | 2 weeks |
+| QL7 RL + interacting QUBO | 4× H100 | ~US$500 | 3–4 weeks |
+| QL8 public leaderboards | — | Small | Ongoing |
