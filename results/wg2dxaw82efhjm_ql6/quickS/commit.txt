@@ -1,0 +1,1 @@
+479f584 runpod_ql6: install ninja in the vLLM venv and put it on PATH

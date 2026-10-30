@@ -1,0 +1,11 @@
+A3_webonly rc=0 wall=1491s
+A3_regauge rc=0 wall=2170s
+A0_dense_eval rc=0 wall=4311s
+A2_dense_ctl rc=0 wall=5529s
+A3_embed035 rc=0 wall=1950s
+A3_ref rc=0 wall=1599s
+A1_main rc=0 wall=7062s
+A3_nofisher rc=0 wall=1524s
+A3_noembed rc=0 wall=1516s
+A2_eval rc=0 wall=4513s
+A1_eval rc=0 wall=3933s

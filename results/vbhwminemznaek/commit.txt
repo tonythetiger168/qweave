@@ -1,0 +1,1 @@
+82a22c2 anneal_alloc: numpy-vectorized greedy; run annealers on GPU (CPU tiny-op overhead made SQA take 400s)

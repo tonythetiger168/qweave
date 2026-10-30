@@ -356,4 +356,4 @@ qweave/
 
 ## License
 
-Proprietary - Quantum Computing Hardware R&D Project
+Apache License 2.0 — see [LICENSE](../LICENSE).

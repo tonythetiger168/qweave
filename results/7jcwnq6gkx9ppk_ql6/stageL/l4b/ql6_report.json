@@ -1,0 +1,148 @@
+{
+  "model": "Qwen/Qwen3-4B-Base",
+  "device": "cuda",
+  "dtype": "torch.bfloat16",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "torch": "2.12.1+cu129",
+  "new_tokens": 256,
+  "n_prompts": 24,
+  "decode": [
+    {
+      "variant": "dense",
+      "engine": "compiled",
+      "route": null,
+      "tok_s": 160.8
+    },
+    {
+      "variant": "dense+fuse",
+      "engine": "compiled",
+      "route": null,
+      "tok_s": 156.5,
+      "speedup": 0.973,
+      "ci95": [
+        0.966,
+        0.98
+      ]
+    },
+    {
+      "variant": "spec:Qwen/Qwen3-0.6B-Base:g5",
+      "engine": "compiled",
+      "route": "L2",
+      "draft": "Qwen/Qwen3-0.6B-Base",
+      "gamma": 5,
+      "alpha": 0.591,
+      "tokens_per_target_call": 3.92,
+      "draft_cost_c": 0.413,
+      "predicted": 0.763,
+      "agreement": 0.3135,
+      "lossless": {
+        "prefix_bf16": 0.3134765625,
+        "tf_within_spec": 1.0,
+        "tf_within_greedy": 1.0,
+        "tf_max_gap_spec": 0.25,
+        "tf_max_gap_greedy": 0.25,
+        "tol": 0.25,
+        "fp32": 0.8916015625
+      },
+      "speedup": 0.806,
+      "ci95": [
+        0.745,
+        0.876
+      ]
+    }
+  ],
+  "spec": [
+    {
+      "variant": "spec:Qwen/Qwen3-0.6B-Base:g5",
+      "engine": "compiled",
+      "route": "L2",
+      "draft": "Qwen/Qwen3-0.6B-Base",
+      "gamma": 5,
+      "alpha": 0.591,
+      "tokens_per_target_call": 3.92,
+      "draft_cost_c": 0.413,
+      "predicted": 0.763,
+      "agreement": 0.3135,
+      "lossless": {
+        "prefix_bf16": 0.3134765625,
+        "tf_within_spec": 1.0,
+        "tf_within_greedy": 1.0,
+        "tf_max_gap_spec": 0.25,
+        "tf_max_gap_greedy": 0.25,
+        "tol": 0.25,
+        "fp32": 0.8916015625
+      },
+      "speedup": 0.806,
+      "ci95": [
+        0.745,
+        0.876
+      ]
+    },
+    {
+      "variant": "hf_assisted:Qwen/Qwen3-0.6B-Base",
+      "engine": "eager",
+      "speedup": 0.576,
+      "ci95": [
+        0.517,
+        0.651
+      ]
+    }
+  ],
+  "prefill": [],
+  "roofline": {
+    "dense": {
+      "bytes_per_token": {
+        "linear": 7266631680.0,
+        "lowrank": 0.0,
+        "embed": 5120.0,
+        "head": 777912320.0,
+        "norm": 392192.0,
+        "kv_cache": 23003136.0,
+        "total": 8067944448.0
+      },
+      "ceiling": 1.0,
+      "params": 4022468096,
+      "audit": {
+        "n_bonds": 0,
+        "misaligned": {},
+        "align": 64
+      }
+    }
+  },
+  "gate": {
+    "decode_gate": 1.3,
+    "prefill_gate": 2.0,
+    "decode": {
+      "dense+fuse@compiled": {
+        "engine": "compiled",
+        "route": null,
+        "speedup": 0.973,
+        "ci95": [
+          0.966,
+          0.98
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": false
+      },
+      "spec:Qwen/Qwen3-0.6B-Base:g5@compiled": {
+        "engine": "compiled",
+        "route": "L2",
+        "speedup": 0.806,
+        "ci95": [
+          0.745,
+          0.876
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": false
+      }
+    },
+    "decode_PASS": false,
+    "decode_PASS_at_CI_bound": false,
+    "prefill_32k": null,
+    "prefill_PASS": false
+  }
+}
