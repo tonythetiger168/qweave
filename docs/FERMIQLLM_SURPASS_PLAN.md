@@ -58,7 +58,11 @@ FermiQLLM 1.0 的五個「量子增強」環節只有公司內測數字。qweave
   或 **L2 無損投機解碼**（dense 驗證壓縮 draft 的 γ 個 token，輸出等同 dense greedy）。另含秩對齊、
   gate/up 兄弟融合、CUDA graph 引擎、torchao INT8（對照 dense INT8）、QSA 端到端 32K prefill。
   原計畫的單一 Triton kernel 改由 CUDA graph 取代（理由見 [QL6_RUN_PLAN.md](QL6_RUN_PLAN.md)）；
-  vLLM 只作 dense 參考。1× H100 約 US$25–35。尚無 GPU 實測數字。
+  vLLM 只作 dense 參考。
+- **實測（2026-10-29/30，1× H100，S/L/K 三階段約 US$30）：未過門檻，記為負面結果。** batch-1 decode
+  受 kernel 啟動數限制而非頻寬：低秩 0.75–0.95×（Triton kernel 約 0.5×）、INT8 ≤1×、投機解碼 0.6–0.8×
+  （stage S 的 1.21× 為量測假象，已修）。32K prefill 端到端 1.52×（需 2×）。引擎差異最大：dense vLLM
+  比 HF+CUDA graph 快 1.36–1.8×，所以任何「推理 +X%」都必須註明引擎。詳見 [QL6_RUN_PLAN.md](QL6_RUN_PLAN.md)。
 
 ### QL7 — 把「量子退火」放到對的問題上（修 F5/F8）
 - 先量測層間交互：Hessian 交叉項 / 成對壓縮的非可加 PPL 變化；只有交互顯著時才用 SQA。

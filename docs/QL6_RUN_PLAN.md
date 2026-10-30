@@ -224,7 +224,7 @@ Three harness bugs that this run exposed are fixed in this PR:
 - (also) the smoke prefill used 32-token QSA blocks, which flex attention
   rejects on CUDA.
 
-## Stage K: Triton low-rank decode kernels (code ready, not run)
+## Stage K: Triton low-rank decode kernels
 
 Stage S showed the problem is not bytes but kernels. Dense 0.6B under CUDA
 graphs ran at 3.3 ms/token, about 11 % of the H100 byte floor (~0.36 ms), so
@@ -260,6 +260,38 @@ and a QL-compressed 0.6B on the kernel path), and the vLLM references that
 stage S did not reach. Decision rule: if the Triton rows do not beat dense on
 4B, low-rank decode speed is closed as a negative result and QL6 rests on
 speculative decoding.
+
+### Stage K results (1× H100 SXM, 2026-10-30): negative
+
+Raw: HF `chienhsinlin/qweave-runs`, `runs/2296up3smreihy_ql6/stageK`. CUDA graphs, batch 1.
+
+| model | variant | tok/s | vs dense |
+|---|---|---|---|
+| 0.6B | dense | 370 | 1 |
+| 0.6B | keep 0.9 + fuse (torch) | 297 | 0.80× |
+| 0.6B | keep 0.9 + fuse + Triton | 167 | **0.45×** |
+| 4B | dense | 174 | 1 |
+| 4B | keep 0.6 (torch) | 165 | 0.95× |
+| 4B | keep 0.9 + fuse + Triton | 81 | **0.46×** |
+| 4B | spec, QL-compressed 0.6B draft, γ 3 | — | 0.61× (α 0.56, c 0.50) |
+| vLLM dense, 0.6B / 4B | | 667 / 236 | (other engine) |
+
+Per layer (M = 1) the Triton path is 0.18–0.32× of cuBLAS dense (4B q_proj
+27 µs vs 6.5 µs); torch low rank is 0.5–0.87×. Outputs match (max abs error
+≤ 0.016). The 16-row output tiles that `tl.dot` needs, plus re-reading the
+t-partials in every program, cost more than the launches they save. A
+competitive kernel would need a hand-tuned split-K GEMV without tensor-core
+tiles, and even then low rank still launches more kernels than dense.
+
+**QL6 conclusion.** At batch 1 on H100, none of the routes reaches 1.3×:
+low rank (torch 0.75–0.95×, Triton ~0.5×), INT8 weight-only (≤ 1×),
+speculative decoding with a 0.6B or QL-compressed draft (0.6–0.8×). Decode at
+this size is launch-bound, not bandwidth-bound, so fewer bytes do not buy
+speed. The biggest lever measured is the engine: dense vLLM is 1.8× (0.6B)
+and 1.36× (4B) faster than HF + CUDA graphs. A fair "+X % inference" claim
+therefore has to name its engine, and QL6 records low-rank decode speed as a
+negative result. The one gated result in this direction is still QL3's
+attention-only QSA (end to end 1.52× at 32K, short of the 2× prefill gate).
 
 ## Honest expectations (written before the run)
 
