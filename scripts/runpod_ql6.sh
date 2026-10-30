@@ -112,7 +112,7 @@ elif [ "$STAGE" = K ]; then
       --engines compiled --triton --layer-bench --prefill "" --out $OUT/k06
   step K2_4b python $D --model $M4 $KC --synthetic-keep 0.9,0.6 --embed-keep 0.5 \
       --engines compiled --triton --layer-bench --prefill "" \
-      --drafts $M06,$OUT/draft06/model.pt --gamma 3,5 --out $OUT/k4b
+      --drafts $OUT/draft06/model.pt --gamma 3,5 --out $OUT/k4b   # 0.6B draft: done in stage L
 elif [ "$STAGE" = S ]; then
   # A QL-compressed 0.6B to use as a REAL draft for 4B (quality matters for
   # acceptance only, so a short 20M-token heal is enough; ~20 min).
