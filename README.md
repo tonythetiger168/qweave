@@ -32,7 +32,7 @@ Several phases are still in open pull requests, linked in the table.
 | Phase | What | Status | Headline result |
 |---|---|---|---|
 | I | State-vector, Clifford, MPS simulators | ✅ on `main` | All validation suites pass on CPU and H100 |
-| II | Noise, DEM + PyMatching decoding | ✅ fixed in [#1](https://github.com/tonythetiger168/qweave/pull/1) | Decoder bug fixed: d=3 repetition code at p=0.1% goes from 2.0% (worse than undecoded 0.65%) to **0.00%**; 33/33 single faults decode correctly |
+| II | Noise, DEM + PyMatching decoding | ✅ on `main` (fixed in [#1](https://github.com/tonythetiger168/qweave/pull/1)) | Decoder bug fixed: d=3 repetition code at p=0.1% goes from 2.0% (worse than undecoded 0.65%) to **0.00%**; 33/33 single faults decode correctly |
 | III | VQE, QAOA, QPE/IPEA, backends | ✅ on `main` (GPU-host test fix in [#1](https://github.com/tonythetiger168/qweave/pull/1)) | 27 checks pass on CPU and H100 |
 | E1 | Rotated surface code + gross code [[144,12,12]], numpy BP+OSD | 🔄 [#7](https://github.com/tonythetiger168/qweave/pull/7) | Matches Stim's generator (d=3: 0.0167 vs 0.0168); threshold ≈ 1.2%, Λ = 2.0 at p=0.5%; gross code 2.5% vs 9.0% for 12 d=7 patches with 4.1× fewer data qubits |
 | E5 | GPU state vector + decoder timings | 🔄 [#8](https://github.com/tonythetiger168/qweave/pull/8) | Torch SV correct on CUDA, ~129× numpy at n=26. cuStateVec path: 3.5–9.4× faster than torch (~3.5 TB/s effective read+write), up to n=32. Gross-code decoding p=4% per shot: CUDA-Q QEC 7 µs, `ldpc` CPU 40 µs, qweave batched torch 50 µs |
@@ -52,13 +52,13 @@ Several phases are still in open pull requests, linked in the table.
 activation-aware whitening, and even then small models lose knowledge and math
 first. Quantum-inspired annealing loses to greedy on separable problems. The one
 clear win is QSA sparse attention at long context. Full write-ups:
-[QL results](https://github.com/tonythetiger168/qweave/blob/claude/ql-all-phases/docs/QL_RESULTS.md) (in #1), [surpass plan](https://github.com/tonythetiger168/qweave/blob/claude/ql-all-phases/docs/FERMIQLLM_SURPASS_PLAN.md),
+[QL results](docs/QL_RESULTS.md), [surpass plan](docs/FERMIQLLM_SURPASS_PLAN.md),
 [QL5 results](https://github.com/tonythetiger168/qweave/blob/claude/ql5-quality/docs/QL5_RESULTS.md),
 [QL6 run plan + results](https://github.com/tonythetiger168/qweave/blob/claude/ql6-decode/docs/QL6_RUN_PLAN.md),
 [E5 GPU results](https://github.com/tonythetiger168/qweave/blob/claude/e5-gpu-bench/docs/E5_GPU_RESULTS.md).
 
 ### Plans
-- [Simulator survey](docs/SURVEY.md) and [2025–2026 quantum research plan](https://github.com/tonythetiger168/qweave/blob/claude/quantum-research-plan/docs/QUANTUM_RESEARCH_PLAN_2026.md) ([#6](https://github.com/tonythetiger168/qweave/pull/6))
+- [Simulator survey](docs/SURVEY.md) and [2025–2026 quantum research plan](docs/QUANTUM_RESEARCH_PLAN_2026.md) 
 - [Quantum LLM roadmap](docs/QUANTUM_LLM_ROADMAP.md) and [FermiQLLM investigation](docs/FERMIQLLM_GLOBAL_INVESTIGATION.md)
 
 ---
