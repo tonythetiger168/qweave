@@ -36,3 +36,40 @@ Fidelity against the numpy engine after 4 random layers: 1 - 2e-15 or better at 
 2. Add an optional cuStateVec path (cuquantum) for the state vector, keeping torch as the fallback.
    Also cut the 3x memory overhead so n=31 fits.
 3. Rerun CUDA-Q with bp_batch_size > 1 and matched BP settings, so the comparison is fair.
+
+---
+
+# E5b/E5c: cuStateVec backend + batched GPU decoder (2026-10-30)
+
+Pods pfpjronh2bj0t1 (run 1) and psaxrxkubht9ij (run 2, with batched OSD), 1x H100, about 2 min of benchmark each.
+Raw data: `runs/pfpjronh2bj0t1_e5b/`, `runs/psaxrxkubht9ij_e5c/`. Script: `scripts/e5b_gpu_bench.py`.
+
+## cuStateVec backend (`phase1_basic/custatevec_backend.py`)
+Fidelity vs the torch backend is 1 to within 1e-14 at n = 4..20, including the x/z/cz/generic two-qubit paths.
+
+| n | torch (s/layer) | cuStateVec (s/layer) | speedup |
+|---|---|---|---|
+| 22 | 0.0119 | 0.0034 | 3.5x |
+| 26 | 0.202 | 0.026 | 7.7x |
+| 30 | 4.13 | 0.441 | 9.4x |
+| 31 | does not fit | 0.886 | |
+| 32 | does not fit | 1.87 | |
+
+cuStateVec runs at the H100's memory-bandwidth limit for n >= 27. It works in place, so n = 32 (64 GiB, complex128) now fits.
+
+## Gross code decoding, p = 4%, code capacity (run 2)
+| decoder | batch | time per shot | failures |
+|---|---|---|---|
+| **qweave torch-cuda (batched BP + batched OSD)** | 100,000 | **2.6 us** | 2657 / 100k |
+| qweave torch-cuda | 10,000 | 15.4 us | 274 / 10k |
+| CUDA-Q nv-qldpc-decoder, raw call (bp_batch_size 1000) | 10,000 | 6.2 us | 273 / 10k |
+| CUDA-Q through `make_decoder("cudaq")` | 100,000 | 15.8 us (Python list conversion) | 2656 / 100k |
+| `ldpc` (C++, CPU, one shot at a time) | 10,000 | 32.7 us | 274 / 10k |
+
+- All decoders make the same decisions: their failure counts differ by at most 1.
+- At large batches, qweave's GPU decoder is 12x faster than `ldpc` and 2.3x faster than CUDA-Q's raw call. That is the offline-simulation use case: threshold sweeps, sampling-heavy experiments.
+- In run 1 the OSD stage ran per shot on CPU, which cost about 40 us/shot. Batching OSD on the GPU removed that bottleneck: 50 us dropped to 2.6 us per shot.
+- Single-syndrome latency is still about 1.5 ms. That is kernel-launch and Python overhead, so it is not suitable for real-time decoding. For one syndrome at a time, `ldpc` (14 us) remains the right backend.
+
+## Decoder backends now in qweave (`qldpc.make_decoder`)
+`auto` picks `cudaq` > `torch-cuda` > `ldpc` > `numpy`, whichever is installed. For large offline batches, pass `backend="torch-cuda"`.
