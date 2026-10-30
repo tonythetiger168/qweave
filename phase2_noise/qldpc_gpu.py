@@ -105,9 +105,53 @@ class TorchBpOsdDecoder:
         return (hard_out.cpu().numpy(), post_out.double().cpu().numpy(),
                 done.cpu().numpy())
 
+    @torch.no_grad()
+    def osd0_batch(self, syndromes: torch.Tensor, posterior: torch.Tensor) -> torch.Tensor:
+        """
+        OSD-0 for many shots at once: GF(2) elimination of H with each
+        shot's own column order (most likely flipped first), run as
+        one tensor op per column over all shots.
+        """
+        dev = self.device
+        F = syndromes.shape[0]
+        H = torch.as_tensor(self.cpu.H, device=dev, dtype=torch.bool)
+        order = torch.argsort(posterior, dim=1, stable=True)            # (F, n)
+        A = torch.cat([H[:, order].permute(1, 0, 2),                      # (F, m, n)
+                       syndromes.bool().unsqueeze(2)], dim=2)           # (F, m, n+1)
+        used = torch.zeros((F, self.m), dtype=torch.bool, device=dev)
+        piv_row = torch.full((F, self.n), -1, dtype=torch.long, device=dev)
+        rows = torch.arange(self.m, device=dev)
+        bidx = torch.arange(F, device=dev)
+        n_piv = torch.zeros(F, dtype=torch.long, device=dev)
+        for j in range(self.n):
+            col = A[:, :, j]
+            cand = col & ~used
+            has = cand.any(1)
+            if not has.any():
+                if bool((n_piv >= self.cpu.rank).all()):
+                    break
+                continue
+            r = cand.to(torch.uint8).argmax(1)                            # first candidate row
+            pivot = A[bidx, r]                                            # (F, n+1)
+            elim = col & (rows.unsqueeze(0) != r.unsqueeze(1)) & has.unsqueeze(1)
+            A ^= elim.unsqueeze(2) & pivot.unsqueeze(1)
+            used[bidx[has], r[has]] = True
+            piv_row[has, j] = r[has]
+            n_piv += has.long()
+            if bool((n_piv >= self.cpu.rank).all()):
+                break
+        sol = torch.zeros((F, self.n), dtype=torch.uint8, device=dev)
+        b, j = torch.nonzero(piv_row >= 0, as_tuple=True)
+        vals = A[b, piv_row[b, j], self.n].to(torch.uint8)
+        sol[b, order[b, j]] = vals
+        return sol
+
     def decode_batch(self, syndromes: np.ndarray) -> np.ndarray:
         syndromes = np.asarray(syndromes, np.uint8)
         hard, post, done = self.bp(syndromes)
-        for i in np.nonzero(~done)[0]:
-            hard[i] = self.cpu.osd0(syndromes[i], post[i])
+        fail = np.nonzero(~done)[0]
+        if len(fail):
+            s = torch.as_tensor(syndromes[fail], device=self.device)
+            pst = torch.as_tensor(post[fail], device=self.device)
+            hard[fail] = self.osd0_batch(s, pst).cpu().numpy()
         return hard

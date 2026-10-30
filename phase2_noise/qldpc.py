@@ -284,13 +284,31 @@ if __name__ == "__main__":
               f"{time.time() - t0:.1f}s")
 
 
+class CudaqDecoder:
+    """Adapter for CUDA-Q QEC's GPU ``nv-qldpc-decoder`` (BP+OSD-0, min-sum)."""
+
+    def __init__(self, H: np.ndarray, error_rate: float, max_iter: int = 100,
+                 ms_scaling: float = 0.625, batch: int = 1000):
+        import cudaq_qec as qec
+        self.dec = qec.get_decoder(
+            "nv-qldpc-decoder", np.asarray(H, np.uint8),
+            error_rate_vec=np.full(H.shape[1], error_rate), use_osd=True,
+            osd_method=0, max_iterations=max_iter, use_sparsity=True,
+            bp_batch_size=batch, bp_method=1, scale_factor=ms_scaling)
+
+    def decode_batch(self, syndromes: np.ndarray) -> np.ndarray:
+        rs = self.dec.decode_batch([s.astype(np.float64).tolist() for s in syndromes])
+        return np.array([np.asarray(r.result) > 0.5 for r in rs], np.uint8)
+
+
 def make_decoder(H: np.ndarray, error_rate: float, backend: str = "auto", **kw):
     """
     BP+OSD-0 decoder with a ``decode_batch(syndromes)`` method.
 
-    backend: "torch-cuda" (batched BP on GPU), "ldpc" (Roffe's C++ BP+OSD,
+    backend: "cudaq" (NVIDIA CUDA-Q QEC on GPU), "torch-cuda" (our
+    batched BP + batched OSD on GPU), "ldpc" (Roffe's C++ BP+OSD,
     fastest on CPU), "torch-cpu", "numpy", or "auto" = the first of
-    torch-cuda / ldpc / numpy that is available. All make the same
+    cudaq / torch-cuda / ldpc / numpy that is available. All make the same
     decisions up to floating-point ties.
     """
     def has_cuda():
@@ -307,8 +325,18 @@ def make_decoder(H: np.ndarray, error_rate: float, backend: str = "auto", **kw):
         except ImportError:
             return False
 
+    def has_cudaq():
+        try:
+            import cudaq_qec  # noqa: F401
+            return has_cuda()
+        except ImportError:
+            return False
+
     if backend == "auto":
-        backend = "torch-cuda" if has_cuda() else "ldpc" if has_ldpc() else "numpy"
+        backend = ("cudaq" if has_cudaq() else "torch-cuda" if has_cuda()
+                   else "ldpc" if has_ldpc() else "numpy")
+    if backend == "cudaq":
+        return CudaqDecoder(H, error_rate, **kw)
     if backend in ("torch-cuda", "torch-cpu"):
         from phase2_noise.qldpc_gpu import TorchBpOsdDecoder
         return TorchBpOsdDecoder(H, error_rate, device=backend.split("-")[1], **kw)

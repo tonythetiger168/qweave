@@ -173,6 +173,16 @@ def _():
     res["ldpc_cpu"] = {"us_per_shot": dt / B * 1e6, "failures": fails(corr, B), "shots": B}
 
     try:
+        cq = make_decoder(hz, p, backend="cudaq")
+        cq.decode_batch(synd[:1000])
+        for B2 in (10000, 100000):
+            t0 = time.perf_counter(); corr = cq.decode_batch(synd[:B2]); dt = time.perf_counter() - t0
+            res[f"cudaq_adapter_B{B2}"] = {"us_per_shot": dt / B2 * 1e6, "failures": fails(corr, B2)}
+    except Exception as e:
+        traceback.print_exc()
+        res["cudaq_adapter"] = {"error": repr(e)[:300]}
+
+    try:
         import cudaq_qec as qec
         kw = dict(error_rate_vec=np.full(144, p), use_osd=True, osd_method=0,
                   max_iterations=100, use_sparsity=True, bp_batch_size=1000)
