@@ -155,3 +155,121 @@ class TorchBpOsdDecoder:
             pst = torch.as_tensor(post[fail], device=self.device)
             hard[fail] = self.osd0_batch(s, pst).cpu().numpy()
         return hard
+
+
+class RelayBpDecoder:
+    """
+    Relay-BP (Mueller et al., IBM 2025): a chain of memory-BP "legs".
+    Each leg runs min-sum BP whose variable bias mixes the prior with the
+    previous marginal, Lambda_j(t) = (1-g_j) Lambda_j(0) + g_j M_j(t-1);
+    leg 0 uses g = gamma0, later legs draw g_j uniformly in
+    [gamma_min, gamma_max] (negative values allowed) and start from the
+    last marginals. Every converged leg yields a candidate; the decoder
+    returns the lowest-weight one after ``solutions`` are found or
+    ``legs`` run out. No OSD stage.
+
+    Works on any parity-check matrix with per-column priors, e.g. the
+    detector error model of a syndrome circuit.
+    """
+
+    def __init__(self, H: np.ndarray, priors: np.ndarray, legs: int = 301,
+                 first_iters: int = 80, leg_iters: int = 60, solutions: int = 5,
+                 gamma0: float = 0.125, gamma_range=(-0.24, 0.66),
+                 ms_scaling: float = 1.0, device: Optional[str] = None, seed: int = 0):
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        H = (np.asarray(H) & 1).astype(np.uint8)
+        self.m, self.n = H.shape
+        self.legs, self.T0, self.Tr, self.S = legs, first_iters, leg_iters, solutions
+        self.g0, self.grange, self.alpha = gamma0, gamma_range, ms_scaling
+        self.gen = torch.Generator(device=self.device).manual_seed(seed)
+        dev = self.device
+        pr = np.clip(np.asarray(priors, np.float64), 1e-12, 0.5 - 1e-12)
+        self.llr0 = torch.as_tensor(np.log((1 - pr) / pr), device=dev, dtype=torch.float32)
+
+        rows, cols = np.nonzero(H)
+        order = np.lexsort((cols, rows))
+        rows, cols = rows[order], cols[order]
+        wr = int(np.bincount(rows, minlength=self.m).max())
+        slot = np.arange(len(rows)) - np.searchsorted(rows, rows)        # position in its row
+        pos = rows * wr + slot
+        self.wr = wr
+        mask = np.zeros(self.m * wr, bool); mask[pos] = True
+        slot_var = np.full(self.m * wr, self.n); slot_var[pos] = cols
+        by_col = np.argsort(cols, kind="stable")
+        wc = int(np.bincount(cols, minlength=self.n).max())
+        cslot = np.arange(len(cols)) - np.searchsorted(cols[by_col], cols[by_col])
+        var_slot = np.full((self.n, wc), self.m * wr)
+        var_slot[cols[by_col], cslot] = pos[by_col]
+        self.chk_mask = torch.as_tensor(mask.reshape(self.m, wr), device=dev)
+        self.slot_var = torch.as_tensor(slot_var, device=dev)
+        self.var_slot = torch.as_tensor(var_slot, device=dev)
+        self.Hd = torch.as_tensor(H, device=dev)
+
+    @torch.no_grad()
+    def decode_batch(self, syndromes: np.ndarray) -> np.ndarray:
+        dev = self.device
+        S0 = syndromes.shape[0]
+        m, n, wr = self.m, self.n, self.wr
+        synd_all = torch.as_tensor(np.asarray(syndromes), device=dev).bool()
+        mask = self.chk_mask.unsqueeze(0)
+        inf = float("inf")
+        zcol = lambda A: torch.zeros((A, 1), device=dev)
+
+        best = torch.zeros((S0, n), dtype=torch.uint8, device=dev)
+        best_w = torch.full((S0,), inf, device=dev)
+        found = torch.zeros(S0, dtype=torch.long, device=dev)
+        last = torch.zeros((S0, n), dtype=torch.uint8, device=dev)
+
+        active = torch.arange(S0, device=dev)
+        s_act = synd_all
+        M = self.llr0.expand(S0, n).clone()                   # marginals
+        for leg in range(self.legs):
+            A = active.numel()
+            if A == 0:
+                break
+            if leg == 0:
+                g = torch.full((A, n), self.g0, device=dev)
+                T = self.T0
+            else:
+                lo, hi = self.grange
+                g = lo + (hi - lo) * torch.rand((A, n), generator=self.gen, device=dev)
+                T = self.Tr
+            v2c = torch.cat([M, zcol(A)], 1)[:, self.slot_var].view(A, m, wr)
+            running = torch.ones(A, dtype=torch.bool, device=dev)
+            for _ in range(T):
+                mag = torch.where(mask, v2c.abs(), torch.tensor(inf, device=dev))
+                neg = (v2c < 0) & mask
+                parity = (neg.sum(2) % 2).bool() ^ s_act
+                min1, arg1 = mag.min(2)
+                min2 = mag.scatter(2, arg1.unsqueeze(2), inf).min(2).values
+                is_min = torch.arange(wr, device=dev).view(1, 1, wr) == arg1.unsqueeze(2)
+                out = torch.where(is_min, min2.unsqueeze(2), min1.unsqueeze(2)) * self.alpha
+                c2v = torch.where(parity.unsqueeze(2) ^ neg, -out, out)
+                c2v = torch.where(mask, c2v, torch.zeros((), device=dev))
+                flat = torch.cat([c2v.reshape(A, -1), zcol(A)], 1)
+                bias = (1 - g) * self.llr0 + g * M
+                post = bias + flat[:, self.var_slot].sum(2)
+                # shots that already converged in this leg keep their state
+                M = torch.where(running.unsqueeze(1), post, M)
+                v2c_new = (torch.cat([post, zcol(A)], 1)[:, self.slot_var] - flat[:, :-1]).view(A, m, wr)
+                v2c = torch.where(running.view(A, 1, 1), v2c_new, v2c)
+                hard = (M < 0)
+                got = (torch.cat([hard, torch.zeros((A, 1), dtype=torch.bool, device=dev)], 1)
+                       [:, self.slot_var].view(A, m, wr).sum(2) % 2).bool()
+                ok = (got == s_act).all(1) & running
+                if ok.any():
+                    idx = active[ok]
+                    e = hard[ok].to(torch.uint8)
+                    w = (e.float() * self.llr0).sum(1)
+                    better = w < best_w[idx]
+                    best[idx[better]] = e[better]
+                    best_w[idx[better]] = w[better]
+                    found[idx] += 1
+                    running &= ~ok
+                if not running.any():
+                    break
+            last[active] = (M < 0).to(torch.uint8)
+            keep = found[active] < self.S
+            active, s_act, M = active[keep], s_act[keep], M[keep]
+        out = torch.where((best_w < inf).unsqueeze(1), best, last)
+        return out.cpu().numpy()
