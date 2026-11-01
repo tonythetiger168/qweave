@@ -7,6 +7,7 @@ Phase E1 validation suite: modern QEC stack.
 [4] Gross code [[144,12,12]] construction
 [5] Own BP+OSD-0 vs ldpc reference (same error samples)
 [6] Gross code vs 12 distance-7 surface code patches (code capacity)
+[7] Gross code at circuit level (depth-8 cycle) + Relay-BP decoder
 """
 
 import sys, time
@@ -146,6 +147,40 @@ twelve = 1 - (1 - patch) ** 12
 check("gross code (144 data qubits) beats 12 x d=7 patches (588) at p=4%",
       g['ler'] < twelve,
       f"(gross {g['ler']:.4f} vs 12 patches {twelve:.4f}, 4.1x fewer data qubits)")
+
+# ------------------------------------------------------------------
+print("=" * 70); print("[7] Gross code circuit + Relay-BP"); print("=" * 70)
+
+from phase2_noise.bb_circuit import bb_memory_circuit, dem_matrices
+c0 = bb_memory_circuit(0.0, 3)
+det, obs = c0.compile_detector_sampler(seed=0).sample(100, separate_observables=True)
+check("288 qubits, 12 logical observables, noiseless circuit silent",
+      c0.num_qubits == 288 and c0.num_observables == 12 and not det.any() and not obs.any())
+try:
+    import torch
+    from phase2_noise.qldpc_gpu import RelayBpDecoder
+    p = 0.04
+    rng = np.random.default_rng(5)
+    e = (rng.random((300, 144)) < p).astype(np.uint8)
+    s = (e.astype(np.int64) @ hz.T % 2).astype(np.uint8)
+    r = RelayBpDecoder(hz, np.full(144, p), device="cpu").decode_batch(s)
+    b = BpOsdDecoder(hz, p).decode_batch(s)
+    fr = int(np.any(((e ^ r).astype(np.int64) @ lz.T) % 2, axis=1).sum())
+    fb = int(np.any(((e ^ b).astype(np.int64) @ lz.T) % 2, axis=1).sum())
+    check("Relay-BP (no OSD) solves every code-capacity syndrome",
+          np.array_equal((r.astype(np.int64) @ hz.T) % 2, s))
+    check("Relay-BP fails no more often than BP+OSD-0 (p=4%)", fr <= fb,
+          f"(Relay-BP {fr}, BP+OSD {fb} of 300)")
+    c = bb_memory_circuit(0.004, 3)
+    H, Lm, pr = dem_matrices(c)
+    det, obs = c.compile_detector_sampler(seed=3).sample(100, separate_observables=True)
+    r = RelayBpDecoder(H, pr, device="cpu").decode_batch(det.astype(np.uint8))
+    ok = np.mean(np.all((r.astype(np.int64) @ H.T) % 2 == det, axis=1))
+    fails = int(np.any((r.astype(np.int64) @ Lm.T) % 2 != obs, axis=1).sum())
+    check("circuit level (p=0.4%, 3 cycles): Relay-BP matches >=95% of syndromes",
+          ok >= 0.95, f"(syndrome match {ok:.2f}, logical failures {fails}/100)")
+except ImportError:
+    print("  [SKIP] torch not installed")
 
 print("=" * 70)
 print("ALL CHECKS PASS" if PASS else "SOME CHECKS FAILED")
