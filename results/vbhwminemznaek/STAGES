@@ -1,0 +1,15 @@
+p1_validate rc=0 wall=43s
+p2_validate rc=0 wall=4s
+p3_validate rc=0 wall=3s
+ql1_validate rc=0 wall=3s
+ql15_smoke rc=0 wall=363s
+ql2_bench rc=0 wall=344s
+ql15_dense rc=0 wall=159s
+ql15_s30_kd rc=0 wall=467s
+ql15_s30_ce rc=0 wall=371s
+ql15_s15_kd rc=0 wall=456s
+ql15_s20_kd rc=0 wall=466s
+ql15_tt_raw rc=0 wall=898s
+ql15_mpo_old rc=0 wall=231s
+ql3_bench rc=0 wall=153s
+ql4_eval rc=0 wall=1220s

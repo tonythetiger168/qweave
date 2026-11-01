@@ -1,0 +1,2 @@
+torch 2.12.1+cu129 tf 5.21.1
+torchao 0.18.0

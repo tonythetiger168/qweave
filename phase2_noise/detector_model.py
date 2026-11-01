@@ -59,22 +59,27 @@ class RepetitionCodeMemory:
         return rnd * self.n_anc + check
 
     def detector_count(self) -> int:
-        # D(r,i) = s_r(i) xor s_{r-1}(i); round 0 compares to implicit 0
-        return self.R * self.n_anc
+        # D(r,i) = s_r(i) xor s_{r-1}(i); round 0 compares to implicit 0;
+        # final round R: parity recomputed from data measurements xor s_{R-1}
+        return (self.R + 1) * self.n_anc
 
     def detector_matrix(self, outcomes: np.ndarray) -> np.ndarray:
         """(shots, n_meas) outcomes -> (shots, n_detector) detection events."""
         shots = outcomes.shape[0]
-        anc = outcomes[:, :self.R * self.n_anc].reshape(shots, self.R, self.n_anc)
-        det = np.zeros((shots, self.R, self.n_anc), dtype=np.uint8)
+        raw = outcomes[:, :self.R * self.n_anc].reshape(shots, self.R, self.n_anc)
+        # ancillas are not reset between rounds: m_r = parity_r xor m_{r-1}
+        anc = raw.copy()
+        anc[:, 1:, :] = raw[:, 1:, :] ^ raw[:, :-1, :]
+        data = outcomes[:, self.R * self.n_anc:]
+        det = np.zeros((shots, self.R + 1, self.n_anc), dtype=np.uint8)
         det[:, 0, :] = anc[:, 0, :]
-        det[:, 1:, :] = anc[:, 1:, :] ^ anc[:, :-1, :]
+        det[:, 1:self.R, :] = anc[:, 1:, :] ^ anc[:, :-1, :]
+        det[:, self.R, :] = (data[:, :-1] ^ data[:, 1:]) ^ anc[:, -1, :]
         return det.reshape(shots, self.detector_count())
 
     def actual_logical(self, outcomes: np.ndarray) -> np.ndarray:
-        """Parity of the final data measurements (1 = logical error for |0_L>)."""
-        data = outcomes[:, self.R * self.n_anc:]
-        return (data.sum(axis=1) % 2).astype(np.uint8)
+        """Logical Z = Z on data qubit 0 (1 = logical error for |0_L>)."""
+        return outcomes[:, self.R * self.n_anc].astype(np.uint8)
 
 
 # ----------------------------------------------------------------------
@@ -164,67 +169,90 @@ class DemBuilder:
 # Decode with PyMatching
 # ----------------------------------------------------------------------
 class Matcher:
-    """Build a PyMatching graph from enumerated faults and decode shots."""
+    """Build a PyMatching graph from enumerated faults and decode shots.
 
-    def __init__(self, faults: List[Tuple[str, Tuple[int, ...], bool]],
+    PyMatching `fault_ids` are OBSERVABLE indices: an edge carries {0}
+    when its fault flips the logical observable, {} otherwise; decoding
+    returns the predicted observable flips directly.
+    """
+
+    def __init__(self, faults: List[Tuple[str, Tuple[int, ...], bool, float]],
                  n_detectors: int):
         import pymatching
         self.faults = faults
-        self.logical_flags = np.array([f[2] for f in faults], dtype=np.uint8)
         self.m = pymatching.Matching()
-        next_aux = n_detectors + 1        # aux star nodes (id 0 free: boundary)
-
-        def weight_of(fids):
-            ps = [faults[f][3] for f in fids if faults[f][3] > 0]
-            if ps and len(ps) == len(fids):
-                return float(-np.log(min(ps)))     # MAP weight
-            return 1.0 if len(faults[fids[0]][1]) != 1 else 1.5  # tie-break
 
         # Several single-fault locations can produce the SAME detector
         # pattern (e.g. measurement error vs late boundary data error) --
         # indistinguishable by syndrome, so they share one graph edge.
-        edge_fids = {}
+        groups: Dict[Tuple[int, ...], List[int]] = {}
         for fid, (_, dets, _log, _p) in enumerate(faults):
-            key = ('S', dets[0]) if len(dets) == 1 else tuple(dets)
-            edge_fids.setdefault(key, []).append(fid)
+            if dets:
+                groups.setdefault(tuple(sorted(dets)), []).append(fid)
 
-        for key, fids in edge_fids.items():
-            if len(key) == 0:
-                continue  # undetectable fault (contributes logical floor)
-            w = weight_of(fids)
-            if key[0] == 'S':
-                self.m.add_boundary_edge(key[1], weight=w,
-                                         fault_ids=set(fids))
+        def merged(fids):
+            ps = np.array([max(faults[f][3], 0.0) for f in fids])
+            flips = np.array([faults[f][2] for f in fids])
+            if ps.sum() > 0:
+                p = float(ps.sum())
+                logical = bool(ps[flips].sum() > ps[~flips].sum())
+                w = float(np.log((1 - p) / p)) if p < 0.5 else 0.0
+            else:                       # no rates: uniform weights, majority flag
+                logical = bool(flips.sum() * 2 > len(flips))
+                w = 1.0
+            return logical, w
+
+        graphlike = {k: merged(v) for k, v in groups.items() if len(k) <= 2}
+        for key, fids in groups.items():
+            if len(key) <= 2:
                 continue
-            nodes = key
-            if len(nodes) == 0:
-                continue  # undetectable fault (contributes logical floor)
-            if len(nodes) > 2:
-                # hyperedge (X between the two CNOTs of a check):
-                # star-decompose via an auxiliary node (approximate)
-                aux = next_aux
-                next_aux += 1
-                for d in nodes:
-                    self.m.add_edge(d, aux, fault_ids=set(fids), weight=w)
+            # hyperedge: if it splits into existing graph-like edges MWPM
+            # already covers it; otherwise add it as consecutive pairs
+            if not self._decomposable(key, graphlike):
+                logical, w = merged(fids)
+                pairs = [key[i:i + 2] for i in range(0, len(key), 2)]
+                for k, pr in enumerate(pairs):
+                    cur = graphlike.get(pr)
+                    if cur is None or cur[1] > w:
+                        graphlike[pr] = (logical if k == 0 else False, w)
+
+        for key, (logical, w) in graphlike.items():
+            obs = {0} if logical else set()
+            if len(key) == 1:
+                self.m.add_boundary_edge(key[0], weight=w, fault_ids=obs,
+                                         merge_strategy="smallest-weight")
             else:
-                self.m.add_edge(nodes[0], nodes[1], fault_ids=set(fids),
-                                weight=w)
+                self.m.add_edge(key[0], key[1], weight=w, fault_ids=obs,
+                                merge_strategy="smallest-weight")
         self.n_detectors = n_detectors
+
+    @staticmethod
+    def _decomposable(key, edges) -> bool:
+        if not key:
+            return True
+        a = key[0]
+        if (a,) in edges and Matcher._decomposable(key[1:], edges):
+            return True
+        for b in key[1:]:
+            if (a, b) in edges:
+                rest = tuple(x for x in key[1:] if x != b)
+                if Matcher._decomposable(rest, edges):
+                    return True
+        return False
 
     def decode(self, detection_events: np.ndarray) -> np.ndarray:
         """Returns predicted logical flips (shots,)."""
-        # pad with zero columns up to num_nodes (aux star nodes are internal)
         width = self.m.num_detectors
         if detection_events.shape[1] < width:
             pad = np.zeros((detection_events.shape[0],
                             width - detection_events.shape[1]), np.uint8)
             detection_events = np.concatenate([detection_events, pad], axis=1)
+        elif detection_events.shape[1] > width:
+            detection_events = detection_events[:, :width]
         pred = self.m.decode_batch(detection_events)
-        out = np.zeros(len(pred), dtype=np.uint8)
-        for i, ids in enumerate(pred):
-            if len(ids):
-                out[i] = np.bitwise_xor.reduce(self.logical_flags[list(ids)])
-        return out
+        if pred.ndim == 1 or pred.shape[1] == 0:
+            return np.zeros(len(detection_events), dtype=np.uint8)
+        return pred[:, 0].astype(np.uint8)
 
 
 # ----------------------------------------------------------------------
