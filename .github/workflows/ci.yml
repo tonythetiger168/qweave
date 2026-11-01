@@ -27,6 +27,8 @@ jobs:
         run: python phase3_scale/validate_p0c.py
       - name: QL1 validation (10 checks, TN compression)
         run: python phase4_llm/validate_ql1.py
+      - name: QL7 validation (12 checks, QUBO solvers + GRPO selection, CPU)
+        run: python phase4_llm/validate_ql7.py
       - name: QL1.5 heal pipeline smoke, raw MPO (CPU, no downloads)
         run: python phase4_llm/heal_finetune.py --smoke --format mpo --steps 20 --out /tmp/ql15-smoke
       - name: CLI smoke test
