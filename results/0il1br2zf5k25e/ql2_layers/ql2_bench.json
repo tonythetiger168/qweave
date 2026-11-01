@@ -1,0 +1,487 @@
+{
+  "device": "cuda",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "layers": [
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "dense",
+      "params": 2097152,
+      "compression_x": 1.0,
+      "ms": 0.434,
+      "tokens_per_s": 18864466
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "lowrank keep0.3",
+      "params": 626688,
+      "compression_x": 3.35,
+      "ms": 0.494,
+      "tokens_per_s": 16596101
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "lowrank keep0.5",
+      "params": 1047552,
+      "compression_x": 2.0,
+      "ms": 0.827,
+      "tokens_per_s": 9900087
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "lowrank keep0.7",
+      "params": 1465344,
+      "compression_x": 1.43,
+      "ms": 0.919,
+      "tokens_per_s": 8909912
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-eager r32",
+      "params": 84224,
+      "compression_x": 24.9,
+      "ms": 20.448,
+      "tokens_per_s": 400624
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-mat r32",
+      "params": 84224,
+      "compression_x": 24.9,
+      "ms": 0.934,
+      "tokens_per_s": 8770609
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-compiled r32",
+      "params": 84224,
+      "compression_x": 24.9,
+      "ms": 8.99,
+      "tokens_per_s": 911267
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-eager r64",
+      "params": 299264,
+      "compression_x": 7.01,
+      "ms": 40.957,
+      "tokens_per_s": 200014
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-mat r64",
+      "params": 299264,
+      "compression_x": 7.01,
+      "ms": 0.938,
+      "tokens_per_s": 8737822
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-compiled r64",
+      "params": 299264,
+      "compression_x": 7.01,
+      "ms": 16.661,
+      "tokens_per_s": 491694
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-eager r128",
+      "params": 594176,
+      "compression_x": 3.53,
+      "ms": 73.291,
+      "tokens_per_s": 111773
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-mat r128",
+      "params": 594176,
+      "compression_x": 3.53,
+      "ms": 0.916,
+      "tokens_per_s": 8941445
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-compiled r128",
+      "params": 594176,
+      "compression_x": 3.53,
+      "ms": 25.867,
+      "tokens_per_s": 316691
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-eager r256",
+      "params": 1184000,
+      "compression_x": 1.77,
+      "ms": 137.498,
+      "tokens_per_s": 59579
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-mat r256",
+      "params": 1184000,
+      "compression_x": 1.77,
+      "ms": 1.006,
+      "tokens_per_s": 8145593
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "variant": "tt-compiled r256",
+      "params": 1184000,
+      "compression_x": 1.77,
+      "ms": 44.579,
+      "tokens_per_s": 183763
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "dense",
+      "params": 3145728,
+      "compression_x": 1.0,
+      "ms": 0.565,
+      "tokens_per_s": 14506349
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "lowrank keep0.3",
+      "params": 942080,
+      "compression_x": 3.34,
+      "ms": 0.634,
+      "tokens_per_s": 12913797
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "lowrank keep0.5",
+      "params": 1572864,
+      "compression_x": 2.0,
+      "ms": 0.495,
+      "tokens_per_s": 16558511
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "lowrank keep0.7",
+      "params": 2199552,
+      "compression_x": 1.43,
+      "ms": 1.439,
+      "tokens_per_s": 5692563
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-eager r32",
+      "params": 92736,
+      "compression_x": 33.92,
+      "ms": 33.004,
+      "tokens_per_s": 248214
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-mat r32",
+      "params": 92736,
+      "compression_x": 33.92,
+      "ms": 0.939,
+      "tokens_per_s": 8724953
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-compiled r32",
+      "params": 92736,
+      "compression_x": 33.92,
+      "ms": 14.139,
+      "tokens_per_s": 579398
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-eager r64",
+      "params": 315968,
+      "compression_x": 9.96,
+      "ms": 63.939,
+      "tokens_per_s": 128121
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-mat r64",
+      "params": 315968,
+      "compression_x": 9.96,
+      "ms": 0.946,
+      "tokens_per_s": 8663466
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-compiled r64",
+      "params": 315968,
+      "compression_x": 9.96,
+      "ms": 25.616,
+      "tokens_per_s": 319800
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-eager r128",
+      "params": 627264,
+      "compression_x": 5.01,
+      "ms": 112.775,
+      "tokens_per_s": 72640
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-mat r128",
+      "params": 627264,
+      "compression_x": 5.01,
+      "ms": 0.927,
+      "tokens_per_s": 8837950
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-compiled r128",
+      "params": 627264,
+      "compression_x": 5.01,
+      "ms": 39.485,
+      "tokens_per_s": 207473
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-eager r256",
+      "params": 1249856,
+      "compression_x": 2.52,
+      "ms": 210.491,
+      "tokens_per_s": 38919
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-mat r256",
+      "params": 1249856,
+      "compression_x": 2.52,
+      "ms": 0.949,
+      "tokens_per_s": 8636246
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "variant": "tt-compiled r256",
+      "params": 1249856,
+      "compression_x": 2.52,
+      "ms": 68.353,
+      "tokens_per_s": 119848
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "dense",
+      "params": 3145728,
+      "compression_x": 1.0,
+      "ms": 0.596,
+      "tokens_per_s": 13741422
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "lowrank keep0.3",
+      "params": 942080,
+      "compression_x": 3.34,
+      "ms": 0.659,
+      "tokens_per_s": 12425994
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "lowrank keep0.5",
+      "params": 1572864,
+      "compression_x": 2.0,
+      "ms": 0.531,
+      "tokens_per_s": 15431482
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "lowrank keep0.7",
+      "params": 2199552,
+      "compression_x": 1.43,
+      "ms": 1.506,
+      "tokens_per_s": 5441231
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-eager r32",
+      "params": 92736,
+      "compression_x": 33.92,
+      "ms": 17.366,
+      "tokens_per_s": 471715
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-mat r32",
+      "params": 92736,
+      "compression_x": 33.92,
+      "ms": 0.956,
+      "tokens_per_s": 8568406
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-compiled r32",
+      "params": 92736,
+      "compression_x": 33.92,
+      "ms": 17.391,
+      "tokens_per_s": 471057
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-eager r64",
+      "params": 315968,
+      "compression_x": 9.96,
+      "ms": 27.232,
+      "tokens_per_s": 300820
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-mat r64",
+      "params": 315968,
+      "compression_x": 9.96,
+      "ms": 0.952,
+      "tokens_per_s": 8607041
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-compiled r64",
+      "params": 315968,
+      "compression_x": 9.96,
+      "ms": 27.198,
+      "tokens_per_s": 301194
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-eager r128",
+      "params": 627264,
+      "compression_x": 5.01,
+      "ms": 43.626,
+      "tokens_per_s": 187778
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-mat r128",
+      "params": 627264,
+      "compression_x": 5.01,
+      "ms": 0.928,
+      "tokens_per_s": 8826711
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-compiled r128",
+      "params": 627264,
+      "compression_x": 5.01,
+      "ms": 43.804,
+      "tokens_per_s": 187016
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-eager r256",
+      "params": 1249856,
+      "compression_x": 2.52,
+      "ms": 75.727,
+      "tokens_per_s": 108177
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-mat r256",
+      "params": 1249856,
+      "compression_x": 2.52,
+      "ms": 0.951,
+      "tokens_per_s": 8611032
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "variant": "tt-compiled r256",
+      "params": 1249856,
+      "compression_x": 2.52,
+      "ms": 75.727,
+      "tokens_per_s": 108178
+    }
+  ],
+  "alloc": []
+}

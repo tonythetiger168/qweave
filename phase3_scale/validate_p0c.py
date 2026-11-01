@@ -60,7 +60,8 @@ check("Stim marginal q0 vs native",
 check("auto_backend picks Clifford sampler",
       auto_backend(cc) == "native-clifford-sampler")
 check("auto_backend picks SV for non-Clifford",
-      auto_backend(c) == "native-statevector")
+      auto_backend(c) in ("native-statevector", "torch-statevector"),
+      f"-> {auto_backend(c)}")  # GPU hosts route to the torch SV backend
 try:
     big = Circuit(30).rx(0.1, 0)
     auto_backend(big)

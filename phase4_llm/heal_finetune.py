@@ -9,6 +9,15 @@ Pipeline (CompactifAI-style):
   4. heal: AdamW on MPO cores + biases (low LR, cosine, grad ckpt)
   5. report: PPL delta, params saved, peak VRAM, tokens/s
 
+QL2 upgrades (2026-10-28):
+  * --format tt (default): interleaved TT-matrix/MPO cores (TTLinear);
+    the old row|col ordering (--format mpo) caps matrix rank at chi.
+  * --target-saving: per-layer TT rank chosen under a global parameter
+    budget by simulated quantum annealing (anneal_alloc.allocate).
+  * acceptance compares the healed model against the UNCOMPRESSED
+    dense model (ppl_dense), not against the compressed starting point.
+  * --distill: heal with KL to the frozen dense teacher + CE.
+
 Smoke mode (--smoke) runs the same pipeline on a tiny randomly
 initialized GPT without any downloads — use it to verify a fresh GPU
 pod before the real run.
@@ -19,28 +28,38 @@ RunPod quick start (see docs/QL1.5_RUNPOD.md):
       --chi 32 --eps 1e-3 --steps 300 --out /workspace/ql15
 """
 
-import argparse, json, math, time
+import argparse, json, math, os, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import torch
 import torch.nn.functional as F
 
-from phase4_llm.tn_layers import MPOLinear, sensitivity_profile, mpo_num_params
+from phase4_llm.tn_layers import (MPOLinear, TTLinear, sensitivity_profile,
+                                  mpo_num_params, tt_rel_error,
+                                  whitened_svd, lowrank_from_svd)
+from phase4_llm.anneal_alloc import allocate
+
+
+ALLOW_SYNTHETIC = False      # only --smoke may fall back to synthetic text
 
 
 # ----------------------------------------------------------------------
-def ppl_eval(model, tokenizer, device, max_sents=64, stride=256, win=1024):
-    """WikiText-2 test perplexity (sliding window)."""
+def ppl_eval(model, tokenizer, device, max_sents=64, stride=1024, win=1024):
+    """WikiText-2 test perplexity (non-overlapping windows)."""
     try:
         from datasets import load_dataset
-        ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
         text = "\n\n".join(ds["text"][:max_sents * 4])
     except Exception:
+        if not ALLOW_SYNTHETIC:
+            raise
         print("  [warn] wikitext unavailable, using synthetic text")
         text = "the quick brown fox jumps over the lazy dog. " * 4000
     enc = tokenizer(text, return_tensors="pt").input_ids[0].to(device)
     nll_sum, n_tok = 0.0, 0
     was_training = model.training
     model.eval()
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16,
+                                         enabled=str(device).startswith('cuda')):
         for i in range(0, min(enc.numel(), win * max_sents), stride):
             chunk = enc[i:i + win]
             if chunk.numel() < 8:
@@ -53,19 +72,72 @@ def ppl_eval(model, tokenizer, device, max_sents=64, stride=256, win=1024):
     return math.exp(nll_sum / max(n_tok, 1))
 
 
-def heal_data(tokenizer, n=512, seq=256):
+HEAL_SOURCE = 'fineweb'      # set from --heal-data
+
+
+def _heal_text(min_chars):
+    """General-domain heal text: FineWeb-Edu (default) so WikiText-2 PPL
+    stays an OUT-of-domain test. --heal-data wikitext reproduces the
+    earlier in-domain runs (which flatter PPL: a dense model fine-tuned
+    150 steps on WikiText-103 drops 21.7 -> 13.7)."""
+    from datasets import load_dataset
+    if HEAL_SOURCE == 'fineweb':
+        ds = load_dataset("HuggingFaceFW/fineweb-edu", "sample-10BT",
+                          split="train", streaming=True)
+        parts, n = [], 0
+        for row in ds:
+            parts.append(row["text"]); n += len(row["text"])
+            if n >= min_chars:
+                break
+        return "\n\n".join(parts)
+    ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1", split="train")
+    return "\n\n".join(ds["text"][:60_000])
+
+
+def heal_data(tokenizer, n=512, seq=256, seed=1):
+    """n random windows of seq+1 tokens from the heal corpus."""
     try:
-        from datasets import load_dataset
-        ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-        text = "\n\n".join(ds["text"][:n * 2])
+        text = _heal_text(min_chars=max(n * (seq + 1) * 5, 2_000_000))
     except Exception:
+        if not ALLOW_SYNTHETIC:
+            raise
         text = "quantum tensor networks compress large language models. " * 4000
     enc = tokenizer(text, return_tensors="pt").input_ids[0]
-    rows = []
-    for i in range(n):
-        j = (i * seq) % max(enc.numel() - seq - 1, 1)
-        rows.append(enc[j:j + seq + 1])
-    return rows
+    g = torch.Generator().manual_seed(seed)
+    hi = max(enc.numel() - seq - 1, 1)
+    starts = torch.randint(0, hi, (n,), generator=g).tolist()
+    return [enc[j:j + seq + 1] for j in starts]
+
+
+@torch.no_grad()
+def calibrate(model, modules, tokenizer, device, n=128, seq=512):
+    """Input Gram matrices X X^T (in x in, float64) for each module,
+    from n windows of WikiText-103 train (disjoint seed from heal data)."""
+    grams = [None] * len(modules)
+
+    def hook(i):
+        def f(mod, inp, out):
+            x = inp[0].reshape(-1, inp[0].shape[-1]).double()
+            g = x.T @ x
+            grams[i] = g if grams[i] is None else grams[i] + g
+        return f
+
+    hs = [m.register_forward_hook(hook(i)) for i, m in enumerate(modules)]
+    rows = heal_data(tokenizer, n=n, seq=seq, seed=7)
+    was = model.training
+    model.eval()
+    for j in range(0, n, 8):
+        model(torch.stack(rows[j:j + 8]).to(device))
+    model.train(was)
+    for h in hs:
+        h.remove()
+    return grams
+
+
+def _align(r: float, a: int) -> int:
+    """Round a rank to a multiple of a (tensor-core tiles). Measured on H100:
+    up_proj rank 384 -> 1.14x dense fwd+bwd; misaligned 477 -> 0.39x."""
+    return max(a, int(round(r / a)) * a) if a > 1 else max(1, int(r))
 
 
 def count_params(m):
@@ -85,10 +157,37 @@ def main():
     ap.add_argument('--batch', type=int, default=4)
     ap.add_argument('--out', default='/workspace/ql15')
     ap.add_argument('--smoke', action='store_true')
+    ap.add_argument('--format', choices=['wsvd', 'tt', 'mpo'], default='wsvd',
+                    help='wsvd: activation-whitened 2-site MPO (default); '
+                         'tt: raw-norm TT-matrix; mpo: legacy row|col MPO')
+    ap.add_argument('--ratios', default='0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85',
+                    help='wsvd: kept-param fractions offered to the allocator')
+    ap.add_argument('--calib', type=int, default=128, help='calibration windows')
+    ap.add_argument('--rank-align', type=int, default=64)
+    ap.add_argument('--d', type=int, default=4, help='TT sites per layer')
+    ap.add_argument('--ranks', default='16,32,64,128,256',
+                    help='TT rank options for the allocator')
+    ap.add_argument('--target-saving', type=float, default=0.3,
+                    help='fraction of candidate-layer params to remove')
+    ap.add_argument('--alloc', choices=['greedy', 'sa', 'sqa'], default='sqa')
+    ap.add_argument('--alloc-sweeps', type=int, default=200)
+    ap.add_argument('--targets',
+                    default='q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj')
+    ap.add_argument('--seq', type=int, default=512)
+    ap.add_argument('--distill', action='store_true')
+    ap.add_argument('--kd-alpha', type=float, default=0.5)
+    ap.add_argument('--kd-t', type=float, default=1.0)
+    ap.add_argument('--heal-scope', choices=['all', 'tn'], default='tn')
+    ap.add_argument('--gate', type=float, default=3.0)
+    ap.add_argument('--save-model', action='store_true')
+    ap.add_argument('--heal-data', choices=['fineweb', 'wikitext'], default='fineweb')
     args = ap.parse_args()
+    global HEAL_SOURCE
+    HEAL_SOURCE = args.heal_data
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    dtype = torch.bfloat16 if device == 'cuda' else torch.float32
+    dtype = torch.bfloat16 if device == 'cuda' else torch.float32  # autocast
+    torch.backends.cuda.matmul.allow_tf32 = True
     torch.manual_seed(0)
     print(f"[ql1.5] device={device} dtype={dtype} model={args.model}")
 
@@ -124,15 +223,26 @@ def main():
         model = Tiny().to(device)
         tok = lambda text, return_tensors="pt": type(
             'T', (), {'input_ids': torch.randint(0, 2000, (1, 512))})()
+        global ALLOW_SYNTHETIC
+        ALLOW_SYNTHETIC = True
         print("[ql1.5] smoke: tiny random GPT (no downloads)")
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
         tok = AutoTokenizer.from_pretrained(args.model)
         model = AutoModelForCausalLM.from_pretrained(
-            args.model, torch_dtype=dtype,
-            attn_implementation="flash_attention_2" if device == 'cuda'
-            else "eager").to(device)
+            args.model, torch_dtype=torch.float32,     # fp32 master weights,
+            attn_implementation="sdpa").to(device)     # bf16 via autocast
     model.train()
+
+    # ---------------- dense reference ----------------
+    ppl_dense = ppl_eval(model, tok, device)
+    print(f"[ql1.5] dense PPL = {ppl_dense:.3f}")
+    teacher = None
+    if args.distill:
+        import copy
+        teacher = copy.deepcopy(model).eval()
+        for p in teacher.parameters():
+            p.requires_grad_(False)
 
     # ---------------- compress ----------------
     candidates = []
@@ -142,92 +252,201 @@ def main():
                 candidates.append((f"block{i}.{name}", b[name]))
     else:
         for i, layer in enumerate(model.model.layers):
-            for name, mod in (('q_proj', layer.self_attn.q_proj),
-                              ('o_proj', layer.self_attn.o_proj),
-                              ('gate_proj', layer.mlp.gate_proj),
-                              ('up_proj', layer.mlp.up_proj)):
+            for name in args.targets.split(','):
+                mod = getattr(layer.self_attn, name, None) or getattr(layer.mlp, name)
                 candidates.append((f"L{i}.{name}", mod))
     print(f"[ql1.5] {len(candidates)} candidate Linear layers")
-
-    scores = sensitivity_profile([m.weight.detach() for _, m in candidates],
-                                 chi_probe=8)
-    order = sorted(range(len(candidates)),
-                   key=lambda i: scores[i])          # most compressible first
-    n_comp = max(1, int(len(candidates) * args.compress_frac))
-    picked = order[:n_comp]
     dense_before = count_params(model)
+    cand_params = sum(m.weight.numel() for _, m in candidates)
 
-    for idx in picked:
+    plan = {}                                  # idx -> rank (tt) / True (mpo)
+    alloc_report = None
+    factors = {}
+    if args.format in ('tt', 'wsvd') and args.target_saving <= 0:
+        print("[ql1.5] target-saving 0 -> dense reference run (no compression)")
+    elif args.format == 'wsvd':
+        t0 = time.time()
+        grams = calibrate(model, [m for _, m in candidates], tok, device,
+                          n=args.calib, seq=args.seq)
+        ratios = [float(r) for r in args.ratios.split(',')]
+        L, K = len(candidates), len(ratios) + 1
+        err = torch.zeros(L, K); par = torch.zeros(L, K)
+        for l, (_, m) in enumerate(candidates):
+            US, Sig, Bf = whitened_svd(m.weight.detach(), grams[l])
+            factors[l] = (US.float().cpu(), Bf.float().cpu())
+            tot = (Sig ** 2).sum()
+            tail = torch.flip(torch.cumsum(torch.flip(Sig ** 2, [0]), 0), [0])
+            o, i = m.weight.shape
+            for k, rt in enumerate(ratios):
+                r = _align(rt * o * i / (o + i), args.rank_align)
+                err[l, k] = float(tail[r] / tot) if r < len(Sig) else 0.0
+                par[l, k] = r * (o + i)
+            err[l, -1], par[l, -1] = 0.0, o * i
+        del grams
+        budget = cand_params * (1 - args.target_saving)
+        alloc_report = allocate(err, par, budget, method=args.alloc,
+                                sweeps=args.alloc_sweeps)
+        choice = alloc_report[alloc_report['best']]['choice']
+        print(f"[ql2] whitened-SVD allocation ({time.time() - t0:.0f}s): "
+              + ", ".join(f"{k}: err={v['err']:.4f} params={v['params']:.3e}"
+                          for k, v in alloc_report.items() if k != 'best')
+              + f" -> {alloc_report['best']}")
+        for l, k in enumerate(choice):
+            if k < len(ratios):
+                o, i = candidates[l][1].weight.shape
+                plan[l] = _align(ratios[k] * o * i / (o + i), args.rank_align)
+    elif args.format == 'tt':
+        ranks = [int(r) for r in args.ranks.split(',')]
+        L, K = len(candidates), len(ranks) + 1           # last option = dense
+        err = torch.zeros(L, K); par = torch.zeros(L, K)
+        t0 = time.time()
+        for l, (_, m) in enumerate(candidates):
+            W = m.weight.detach()
+            for k, r in enumerate(ranks):
+                e, n = tt_rel_error(W, args.d, r)
+                err[l, k], par[l, k] = e ** 2, n
+            err[l, -1], par[l, -1] = 0.0, W.numel()
+        budget = cand_params * (1 - args.target_saving)
+        alloc_report = allocate(err, par, budget, method=args.alloc,
+                                sweeps=args.alloc_sweeps)
+        choice = alloc_report[alloc_report['best']]['choice']
+        print(f"[ql2] rank allocation ({time.time() - t0:.0f}s): "
+              + ", ".join(f"{k}: err={v['err']:.3f} params={v['params']:.3e}"
+                          for k, v in alloc_report.items() if k != 'best')
+              + f" -> {alloc_report['best']}")
+        for l, k in enumerate(choice):
+            if k < len(ranks):
+                plan[l] = ranks[k]
+    else:
+        scores = sensitivity_profile([m.weight.detach() for _, m in candidates],
+                                     chi_probe=8)
+        order = sorted(range(len(candidates)), key=lambda i: scores[i])
+        for idx in order[:max(1, int(len(candidates) * args.compress_frac))]:
+            plan[idx] = True
+
+    def _replace(root, target, repl):
+        for name, child in root.named_children():
+            if child is target:
+                setattr(root, name, repl)
+                return True
+            if _replace(child, target, repl):
+                return True
+        return False
+
+    for idx, r in plan.items():
         name, mod = candidates[idx]
-        new = MPOLinear(mod.in_features, mod.out_features,
-                        chi_max=args.chi, eps=args.eps, bias=mod.bias is not None,
-                        device=device, dtype=dtype)
-        from phase4_llm.tn_layers import mpo_decompose
         with torch.no_grad():
-            cs = mpo_decompose(mod.weight.detach().to(dtype),
-                               args.chi, args.eps,
-                               new.row_bits, new.col_bits)
-            for p, c in zip(new.cores, cs):
-                p.copy_(c)
-            if mod.bias is not None:
+            if args.format == 'wsvd':
+                US, Bf = factors[idx]
+                new = lowrank_from_svd(US.to(device), Bf.to(device), r,
+                                       bias=mod.bias).to(device)
+            elif args.format == 'tt':
+                new = TTLinear(mod.in_features, mod.out_features, d=args.d,
+                               rank=r, eps=0.0, bias=mod.bias is not None,
+                               weight=mod.weight.detach(), device=device,
+                               dtype=torch.float32)
+            else:
+                new = MPOLinear(mod.in_features, mod.out_features,
+                                chi_max=args.chi, eps=args.eps,
+                                bias=mod.bias is not None, device=device,
+                                weight=mod.weight.detach().float())
+            if mod.bias is not None and args.format != 'wsvd':
                 new.bias.copy_(mod.bias)
-        # generic in-place replacement via object identity
-        def _replace(root, target, repl):
-            for name, child in root.named_children():
-                if child is target:
-                    setattr(root, name, repl)
-                    return True
-                if _replace(child, target, repl):
-                    return True
-            return False
         assert _replace(model, mod, new), f"cannot replace {name}"
-        print(f"  compressed {name:14s} score={scores[idx]:.4f}")
+    print(f"[ql1.5] compressed {len(plan)}/{len(candidates)} layers")
 
     dense_after = count_params(model)
     saved = 1 - dense_after / dense_before
     print(f"[ql1.5] params: {dense_before:,} -> {dense_after:,} "
-          f"(saved {100 * saved:.1f}%)")
+          f"(saved {100 * saved:.1f}% total, "
+          f"{100 * (dense_before - dense_after) / cand_params:.1f}% of candidates)")
 
     # ---------------- eval + heal ----------------
     ppl0 = ppl_eval(model, tok, device)
-    print(f"[ql1.5] baseline PPL = {ppl0:.3f}")
+    print(f"[ql1.5] compressed PPL (before heal) = {ppl0:.3f}")
 
-    rows = heal_data(tok, n=max(args.steps * args.batch // 8, 64))
+    rows = heal_data(tok, n=args.steps * args.batch, seq=args.seq)
+    if args.heal_scope == 'tn':      # only TN cores + biases (+ norms)
+        for n_, p in model.named_parameters():
+            p.requires_grad_(any(t in n_ for t in ('cores', '.A', '.B', 'norm'))
+                             or n_.endswith('bias'))
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.steps)
-    if device == 'cuda':
+    warm = max(1, args.steps // 20)
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda s: min(1.0, (s + 1) / warm) *
+        0.5 * (1 + math.cos(math.pi * min(s, args.steps) / args.steps)))
+    if device == 'cuda' and hasattr(model, 'gradient_checkpointing_enable'):
         model.gradient_checkpointing_enable()
+        if hasattr(model, 'enable_input_require_grads'):
+            model.enable_input_require_grads()
+    if device == 'cuda':
+        torch.cuda.reset_peak_memory_stats()
+    model.train()
     t0, peak, step = time.time(), 0.0, 0
     for step in range(args.steps):
         batch = torch.stack([rows[(step * args.batch + j) % len(rows)]
                              for j in range(args.batch)]).to(device)
-        loss = model(batch, labels=batch).loss
+        with torch.autocast(device_type='cuda', dtype=dtype,
+                            enabled=device == 'cuda'):
+            out = model(batch, labels=batch)
+            loss = out.loss
+            if teacher is not None:
+                with torch.no_grad():
+                    tl = teacher(batch).logits.float()
+                kd = F.kl_div(F.log_softmax(out.logits.float() / args.kd_t, -1),
+                              F.log_softmax(tl / args.kd_t, -1), log_target=True,
+                              reduction='batchmean') * args.kd_t ** 2 / batch.shape[1]
+                loss = (1 - args.kd_alpha) * loss + args.kd_alpha * kd
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
         opt.step(); sched.step()
         if device == 'cuda':
             peak = max(peak, torch.cuda.max_memory_allocated() / 2**30)
-        if step % 50 == 0:
+        if step % 50 == 0 or step == args.steps - 1:
             print(f"  step {step:4d} loss {loss.item():.4f} "
-                  f"({(step + 1) / (time.time() - t0):.2f} it/s)")
+                  f"({(step + 1) / (time.time() - t0):.2f} it/s)", flush=True)
+    train_time = time.time() - t0
+    tok_s = args.steps * args.batch * rows[0].numel() / train_time
+    del teacher
     ppl1 = ppl_eval(model, tok, device)
-    tok_s = args.steps * args.batch * rows[0].numel() / (time.time() - t0)
 
-    report = {'model': args.model, 'chi': args.chi, 'eps': args.eps,
-              'compressed_layers': n_comp, 'param_saving_pct': round(100 * saved, 2),
-              'ppl_baseline': round(ppl0, 4), 'ppl_healed': round(ppl1, 4),
-              'ppl_relative_increase_pct': round(100 * (ppl1 - ppl0) / ppl0, 2),
+    report = {'model': args.model, 'format': args.format, 'd': args.d,
+              'ratios': args.ratios if args.format == 'wsvd' else None,
+              'ranks_chosen': sorted(plan.values()) if args.format == 'wsvd' else None,
+              'ranks': args.ranks, 'target_saving': args.target_saving,
+              'chi': args.chi, 'eps': args.eps,
+              'alloc': args.alloc, 'distill': args.distill,
+              'heal_data': args.heal_data, 'heal_scope': args.heal_scope, 'lr': args.lr,
+              'steps': args.steps, 'batch': args.batch, 'seq': args.seq,
+              'compressed_layers': len(plan), 'candidate_layers': len(candidates),
+              'params_total_before': dense_before, 'params_total_after': dense_after,
+              'param_saving_pct': round(100 * saved, 2),
+              'candidate_saving_pct': round(100 * (dense_before - dense_after)
+                                            / cand_params, 2),
+              'ppl_dense': round(ppl_dense, 4),
+              'ppl_compressed': round(ppl0, 4), 'ppl_healed': round(ppl1, 4),
+              'ppl_relative_increase_pct': round(100 * (ppl1 - ppl_dense) / ppl_dense, 2),
+              'heal_recovery_pct': round(100 * (ppl0 - ppl1) /
+                                         max(ppl0 - ppl_dense, 1e-9), 1),
               'peak_vram_gb': round(peak, 2), 'train_tokens_per_s': round(tok_s, 1),
-              'device': device}
+              'train_time_s': round(train_time, 1), 'device': device,
+              'allocation': {k: ({kk: vv for kk, vv in v.items() if kk != 'choice'}
+                                 if isinstance(v, dict) else v)
+                             for k, v in (alloc_report or {}).items()}}
     import os
     os.makedirs(args.out, exist_ok=True)
     with open(f'{args.out}/ql15_report.json', 'w') as f:
         json.dump(report, f, indent=2)
+    if args.save_model and not args.smoke:
+        from phase4_llm.tn_layers import save_compressed
+        save_compressed(model, args.model, f'{args.out}/model.pt')
+        tok.save_pretrained(f'{args.out}/tokenizer')
     print("\n[ql1.5] report:", json.dumps(report, indent=2))
-    ok = report['ppl_relative_increase_pct'] <= 3.0
-    print("QL1.5 ACCEPTANCE (PPL +<=3%):", "PASS" if ok else "FAIL (heal longer)")
+    ok = report['ppl_relative_increase_pct'] <= args.gate
+    print(f"QL1.5 ACCEPTANCE (PPL vs dense +<={args.gate}%):",
+          "PASS" if ok else "FAIL")
 
 
 if __name__ == '__main__':
