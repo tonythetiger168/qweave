@@ -182,6 +182,19 @@
 7. **與 quantum-rd-plan 對接**：用 Clifford sampler 產生
    device-level 錯誤率報表
 
+## 5b. Phase E1（2026-10-30）：現代 QEC 堆疊
+
+> **狀態：E1 第一部分已交付並驗證**（`phase2_noise/validate_e1.py`）。
+
+- `surface_code.py`：自家 rotated surface code 產生器（佈局 + 防 hook error 的 CNOT 順序），
+  d=3/5/7 電路距離皆為 d；邏輯錯誤率與 stim 官方 generator 在統計誤差內一致；
+  circuit-level noise + MWPM 下 d=5/d=7 交叉點約 1.2%，p=0.5% 時 Λ≈2.0。
+- `qldpc.py`：IBM bivariate bicycle 碼與 gross code [[144,12,12]]（n=144、k=12 已驗證），
+  純 numpy BP+OSD-0 解碼器，與 `ldpc` 參考實作在相同樣本上失敗數一致；
+  code capacity p=4% 時 gross code（144 data qubits）優於 12 個 d=7 surface code patch（588）。
+- 待辦：gross code 的 circuit-level 症狀電路（Bravyi et al. 2024 深度 8 排程）、Relay-BP、
+  解碼延遲量測（E5）。
+
 ## 6. 參考來源
 
 1. Gidney, "Stim: a fast stabilizer circuit simulator", Quantum 5, 497 (2021). arXiv:2103.02202 — https://arxiv.org/pdf/2103.02202
