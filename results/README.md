@@ -14,7 +14,8 @@ GPU / version / commit the run used.
 | `wg2dxaw82efhjm_ql6` | QL6 stage S: batch-1 decode, INT8, fusion, QSA prefill, 4B speculative | 1× H100 | 2026-10-29 | `docs/QL6_RUN_PLAN.md` ([#5](https://github.com/tonythetiger168/qweave/pull/5)) |
 | `7jcwnq6gkx9ppk_ql6` | QL6 stage L: 4B speculative rerun with the lossless check | 1× H100 SXM | 2026-10-30 | `docs/QL6_RUN_PLAN.md` ([#5](https://github.com/tonythetiger168/qweave/pull/5)) |
 | `jcal9lo2xl3j4y_e5` | E5: torch state vector on CUDA, gross-code decoder timings | 1× H100 80GB | 2026-10-30 | `docs/E5_GPU_RESULTS.md` ([#8](https://github.com/tonythetiger168/qweave/pull/8)) |
-| `pfpjronh2bj0t1_e5b` | E5b: cuStateVec scaling to n=32, batched torch BP+OSD on GPU, CUDA-Q QEC | 1× H100 80GB | 2026-10-30 | not written up yet; headline numbers in the top-level README |
+| `pfpjronh2bj0t1_e5b` | E5b: cuStateVec scaling to n=32, batched torch BP+OSD on GPU, CUDA-Q QEC | 1× H100 80GB | 2026-10-30 | `docs/E5_GPU_RESULTS.md` |
+| `psaxrxkubht9ij_e5c` | E5c: batched GPU OSD (2.6 µs/shot at 100k batch) | 1× H100 80GB | 2026-10-30 | `docs/E5_GPU_RESULTS.md` |
+| `2296up3smreihy_ql6` | QL6 stage K: Triton low-rank decode kernels, vLLM references | 1× H100 SXM | 2026-10-30 | `docs/QL6_RUN_PLAN.md` ([#5](https://github.com/tonythetiger168/qweave/pull/5)) |
 
-Not included: QL6 stage K (`2296up3smreihy_ql6`, still running) and an
-unfinished stage L attempt (`rt124qebagr57z_ql6`, no DONE marker).
+Not included: an unfinished QL6 stage L attempt (`rt124qebagr57z_ql6`, no DONE marker) and the QUICK pre-check folders.

@@ -1,0 +1,139 @@
+{
+  "started": "2026-10-30T14:09:53Z",
+  "env": {
+    "torch": "2.12.1+cu129",
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "gpu_mem_gb": 79.2,
+    "custatevec_available": true
+  },
+  "env_status": "ok",
+  "env_seconds": 2.6,
+  "cusv_correctness": {
+    "n4": 0.9999999999999987,
+    "n8": 1.0000000000000013,
+    "n12": 1.0,
+    "n16": 0.9999999999999978,
+    "n20": 1.0000000000000058,
+    "pass": true
+  },
+  "cusv_correctness_status": "ok",
+  "cusv_correctness_seconds": 0.4,
+  "sv_scaling": [
+    {
+      "n": 22,
+      "torch_s": 0.01196813335021337,
+      "cusv_s": 0.003847917697081963,
+      "cusv_GBps": 1151.1,
+      "speedup": 3.11
+    },
+    {
+      "n": 23,
+      "torch_s": 0.024165068675453465,
+      "cusv_s": 0.005128495628014207,
+      "cusv_GBps": 1779.6,
+      "speedup": 4.71
+    },
+    {
+      "n": 24,
+      "torch_s": 0.04847312105509142,
+      "cusv_s": 0.008127562003210187,
+      "cusv_GBps": 2378.0,
+      "speedup": 5.96
+    },
+    {
+      "n": 25,
+      "torch_s": 0.09903885897559424,
+      "cusv_s": 0.013875674611578384,
+      "cusv_GBps": 2863.2,
+      "speedup": 7.14
+    },
+    {
+      "n": 26,
+      "torch_s": 0.20325110293924809,
+      "cusv_s": 0.026780513348057866,
+      "cusv_GBps": 3127.3,
+      "speedup": 7.59
+    },
+    {
+      "n": 27,
+      "torch_s": 0.41913849495661754,
+      "cusv_s": 0.05057700932957232,
+      "cusv_GBps": 3396.8,
+      "speedup": 8.29
+    },
+    {
+      "n": 28,
+      "torch_s": 0.8758687060326338,
+      "cusv_s": 0.10533613098474841,
+      "cusv_GBps": 3425.0,
+      "speedup": 8.31
+    },
+    {
+      "n": 29,
+      "torch_s": 1.8175336803154398,
+      "cusv_s": 0.2082440696346263,
+      "cusv_GBps": 3547.4,
+      "speedup": 8.73
+    },
+    {
+      "n": 30,
+      "torch_s": 4.107036448006208,
+      "cusv_s": 0.43844872262949747,
+      "cusv_GBps": 3526.5,
+      "speedup": 9.37
+    },
+    {
+      "n": 31,
+      "cusv_s": 0.8805718406413993,
+      "cusv_GBps": 3589.8
+    },
+    {
+      "n": 32,
+      "cusv_s": 1.8560415413230658,
+      "cusv_GBps": 3554.4
+    }
+  ],
+  "sv_scaling_status": "ok",
+  "sv_scaling_seconds": 45.3,
+  "decoders": {
+    "p": 0.04,
+    "torch_cuda_B1000": {
+      "us_per_shot": 228.4581270068884,
+      "failures": 20,
+      "shots": 1000
+    },
+    "torch_cuda_B10000": {
+      "us_per_shot": 15.436384291388094,
+      "failures": 274,
+      "shots": 10000
+    },
+    "torch_cuda_B100000": {
+      "us_per_shot": 2.6442510006017983,
+      "failures": 2657,
+      "shots": 100000
+    },
+    "torch_cuda_latency_median_us": 1485.6684720143676,
+    "ldpc_cpu": {
+      "us_per_shot": 32.739953813143075,
+      "failures": 274,
+      "shots": 10000
+    },
+    "cudaq_adapter_B10000": {
+      "us_per_shot": 14.801299292594194,
+      "failures": 274
+    },
+    "cudaq_adapter_B100000": {
+      "us_per_shot": 15.846383788157254,
+      "failures": 2656
+    },
+    "cudaq_qec_gpu": {
+      "us_per_shot": 6.192180514335632,
+      "failures": 273,
+      "shots": 10000,
+      "settings": "min-sum, scale 0.625, bp_batch_size 1000"
+    }
+  },
+  "decoders_status": "ok",
+  "decoders_seconds": 8.2,
+  "finished": "2026-10-30T14:10:50Z"
+}

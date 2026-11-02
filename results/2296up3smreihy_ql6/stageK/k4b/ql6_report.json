@@ -1,0 +1,611 @@
+{
+  "model": "Qwen/Qwen3-4B-Base",
+  "device": "cuda",
+  "dtype": "torch.bfloat16",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "torch": "2.12.1+cu129",
+  "new_tokens": 256,
+  "n_prompts": 12,
+  "decode": [
+    {
+      "variant": "dense",
+      "engine": "compiled",
+      "route": null,
+      "tok_s": 174.1
+    },
+    {
+      "variant": "dense+fuse",
+      "engine": "compiled",
+      "route": null,
+      "tok_s": 164.0,
+      "speedup": 0.942,
+      "ci95": [
+        0.852,
+        1.0
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.9_emb0.5",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 143.7,
+      "speedup": 0.825,
+      "ci95": [
+        0.747,
+        0.874
+      ],
+      "vs_matched_dense": "dense",
+      "speedup_vs_matched": 0.825,
+      "ci95_vs_matched": [
+        0.747,
+        0.874
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.9_emb0.5+fuse",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 152.6,
+      "speedup": 0.876,
+      "ci95": [
+        0.867,
+        0.885
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.93,
+      "ci95_vs_matched": [
+        0.878,
+        1.031
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.9_emb0.5+fuse+triton",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "triton": {
+        "linear": 180,
+        "glu_mlp": 36
+      },
+      "tok_s": 80.5,
+      "speedup": 0.463,
+      "ci95": [
+        0.459,
+        0.466
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.491,
+      "ci95_vs_matched": [
+        0.464,
+        0.544
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.6_emb0.5",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 165.1,
+      "speedup": 0.948,
+      "ci95": [
+        0.941,
+        0.955
+      ],
+      "vs_matched_dense": "dense",
+      "speedup_vs_matched": 0.948,
+      "ci95_vs_matched": [
+        0.941,
+        0.955
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.6_emb0.5+fuse",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 159.7,
+      "speedup": 0.917,
+      "ci95": [
+        0.809,
+        0.989
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.974,
+      "ci95_vs_matched": [
+        0.816,
+        1.148
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.6_emb0.5+fuse+triton",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "triton": {
+        "linear": 180,
+        "glu_mlp": 36
+      },
+      "tok_s": 97.4,
+      "speedup": 0.559,
+      "ci95": [
+        0.555,
+        0.564
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.594,
+      "ci95_vs_matched": [
+        0.562,
+        0.657
+      ]
+    },
+    {
+      "variant": "spec:/workspace/ql6_runs/stageK/draft06/model.pt:g3",
+      "engine": "compiled",
+      "route": "L2",
+      "draft": "/workspace/ql6_runs/stageK/draft06/model.pt",
+      "gamma": 3,
+      "alpha": 0.564,
+      "tokens_per_target_call": 2.68,
+      "draft_cost_c": 0.508,
+      "dense_tok_s": 200.8,
+      "draft_tok_s": 395.0,
+      "predicted": 0.816,
+      "agreement": 0.4834,
+      "lossless": {
+        "prefix_bf16": 0.4833984375,
+        "tf_within_spec": 0.9990234375,
+        "tf_within_greedy": 1.0,
+        "tf_max_gap_spec": 0.5,
+        "tf_max_gap_greedy": 0.25,
+        "tol": 0.25,
+        "fp32": 1.0,
+        "fp32_divergence_gaps": []
+      },
+      "speedup": 0.613,
+      "ci95": [
+        0.561,
+        0.68
+      ]
+    },
+    {
+      "variant": "spec:/workspace/ql6_runs/stageK/draft06/model.pt:g5",
+      "engine": "compiled",
+      "route": "L2",
+      "draft": "/workspace/ql6_runs/stageK/draft06/model.pt",
+      "gamma": 5,
+      "alpha": 0.484,
+      "tokens_per_target_call": 3.41,
+      "draft_cost_c": 0.502,
+      "dense_tok_s": 199.6,
+      "draft_tok_s": 397.6,
+      "predicted": 0.545,
+      "agreement": 0.4756,
+      "lossless": {
+        "prefix_bf16": 0.4755859375,
+        "tf_within_spec": 1.0,
+        "tf_within_greedy": 1.0,
+        "tf_max_gap_spec": 0.25,
+        "tf_max_gap_greedy": 0.25,
+        "tol": 0.25,
+        "fp32": 1.0,
+        "fp32_divergence_gaps": []
+      },
+      "speedup": 0.588,
+      "ci95": [
+        0.533,
+        0.652
+      ]
+    }
+  ],
+  "spec": [
+    {
+      "variant": "spec:/workspace/ql6_runs/stageK/draft06/model.pt:g3",
+      "engine": "compiled",
+      "route": "L2",
+      "draft": "/workspace/ql6_runs/stageK/draft06/model.pt",
+      "gamma": 3,
+      "alpha": 0.564,
+      "tokens_per_target_call": 2.68,
+      "draft_cost_c": 0.508,
+      "dense_tok_s": 200.8,
+      "draft_tok_s": 395.0,
+      "predicted": 0.816,
+      "agreement": 0.4834,
+      "lossless": {
+        "prefix_bf16": 0.4833984375,
+        "tf_within_spec": 0.9990234375,
+        "tf_within_greedy": 1.0,
+        "tf_max_gap_spec": 0.5,
+        "tf_max_gap_greedy": 0.25,
+        "tol": 0.25,
+        "fp32": 1.0,
+        "fp32_divergence_gaps": []
+      },
+      "speedup": 0.613,
+      "ci95": [
+        0.561,
+        0.68
+      ]
+    },
+    {
+      "variant": "spec:/workspace/ql6_runs/stageK/draft06/model.pt:g5",
+      "engine": "compiled",
+      "route": "L2",
+      "draft": "/workspace/ql6_runs/stageK/draft06/model.pt",
+      "gamma": 5,
+      "alpha": 0.484,
+      "tokens_per_target_call": 3.41,
+      "draft_cost_c": 0.502,
+      "dense_tok_s": 199.6,
+      "draft_tok_s": 397.6,
+      "predicted": 0.545,
+      "agreement": 0.4756,
+      "lossless": {
+        "prefix_bf16": 0.4755859375,
+        "tf_within_spec": 1.0,
+        "tf_within_greedy": 1.0,
+        "tf_max_gap_spec": 0.25,
+        "tf_max_gap_greedy": 0.25,
+        "tol": 0.25,
+        "fp32": 1.0,
+        "fp32_divergence_gaps": []
+      },
+      "speedup": 0.588,
+      "ci95": [
+        0.533,
+        0.652
+      ]
+    },
+    {
+      "variant": "hf_assisted:/workspace/ql6_runs/stageK/draft06/model.pt",
+      "engine": "eager",
+      "speedup": 0.527,
+      "ci95": [
+        0.472,
+        0.592
+      ]
+    }
+  ],
+  "prefill": [],
+  "roofline": {
+    "dense": {
+      "bytes_per_token": {
+        "linear": 7266631680.0,
+        "lowrank": 0.0,
+        "embed": 5120.0,
+        "head": 777912320.0,
+        "norm": 392192.0,
+        "kv_cache": 23003136.0,
+        "total": 8067944448.0
+      },
+      "ceiling": 1.0,
+      "params": 4022468096,
+      "audit": {
+        "n_bonds": 0,
+        "misaligned": {},
+        "align": 64
+      }
+    },
+    "synthetic_keep0.9_emb0.5": {
+      "bytes_per_token": {
+        "linear": 0.0,
+        "lowrank": 6436159488.0,
+        "embed": 6556160.0,
+        "head": 395509760.0,
+        "norm": 392192.0,
+        "kv_cache": 23003136.0,
+        "total": 6861620736.0
+      },
+      "ceiling": 1.176,
+      "params": 3416030720,
+      "audit": {
+        "n_bonds": 253,
+        "misaligned": {},
+        "align": 64
+      }
+    },
+    "synthetic_keep0.6_emb0.5": {
+      "bytes_per_token": {
+        "linear": 0.0,
+        "lowrank": 4378853376.0,
+        "embed": 6556160.0,
+        "head": 395509760.0,
+        "norm": 392192.0,
+        "kv_cache": 23003136.0,
+        "total": 4804314624.0
+      },
+      "ceiling": 1.679,
+      "params": 2387377664,
+      "audit": {
+        "n_bonds": 253,
+        "misaligned": {},
+        "align": 64
+      }
+    }
+  },
+  "layers": [
+    {
+      "layer": "q_proj",
+      "in": 2560,
+      "out": 4096,
+      "rank": 1408,
+      "M": 1,
+      "bytes_ratio": 1.119,
+      "us_dense": 6.53,
+      "us_torch_lowrank": 9.99,
+      "us_triton_lowrank": 27.25,
+      "speedup_triton_vs_dense": 0.24,
+      "speedup_torch_vs_dense": 0.653,
+      "max_abs_err": 1.9073486328125e-06
+    },
+    {
+      "layer": "q_proj",
+      "in": 2560,
+      "out": 4096,
+      "rank": 960,
+      "M": 1,
+      "bytes_ratio": 1.641,
+      "us_dense": 6.53,
+      "us_torch_lowrank": 9.13,
+      "us_triton_lowrank": 26.4,
+      "speedup_triton_vs_dense": 0.247,
+      "speedup_torch_vs_dense": 0.715,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "k_proj",
+      "in": 2560,
+      "out": 1024,
+      "rank": 640,
+      "M": 1,
+      "bytes_ratio": 1.143,
+      "us_dense": 5.53,
+      "us_torch_lowrank": 9.63,
+      "us_triton_lowrank": 21.71,
+      "speedup_triton_vs_dense": 0.255,
+      "speedup_torch_vs_dense": 0.574,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "k_proj",
+      "in": 2560,
+      "out": 1024,
+      "rank": 448,
+      "M": 1,
+      "bytes_ratio": 1.633,
+      "us_dense": 5.53,
+      "us_torch_lowrank": 8.36,
+      "us_triton_lowrank": 17.2,
+      "speedup_triton_vs_dense": 0.321,
+      "speedup_torch_vs_dense": 0.661,
+      "max_abs_err": 7.62939453125e-06
+    },
+    {
+      "layer": "o_proj",
+      "in": 4096,
+      "out": 2560,
+      "rank": 1408,
+      "M": 1,
+      "bytes_ratio": 1.119,
+      "us_dense": 8.12,
+      "us_torch_lowrank": 11.24,
+      "us_triton_lowrank": 29.05,
+      "speedup_triton_vs_dense": 0.28,
+      "speedup_torch_vs_dense": 0.722,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "o_proj",
+      "in": 4096,
+      "out": 2560,
+      "rank": 960,
+      "M": 1,
+      "bytes_ratio": 1.641,
+      "us_dense": 8.12,
+      "us_torch_lowrank": 9.3,
+      "us_triton_lowrank": 27.35,
+      "speedup_triton_vs_dense": 0.297,
+      "speedup_torch_vs_dense": 0.873,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "up_proj",
+      "in": 2560,
+      "out": 9728,
+      "rank": 1792,
+      "M": 1,
+      "bytes_ratio": 1.131,
+      "us_dense": 19.18,
+      "us_torch_lowrank": 20.26,
+      "us_triton_lowrank": 50.3,
+      "speedup_triton_vs_dense": 0.381,
+      "speedup_torch_vs_dense": 0.947,
+      "max_abs_err": 0.015625
+    },
+    {
+      "layer": "up_proj",
+      "in": 2560,
+      "out": 9728,
+      "rank": 1216,
+      "M": 1,
+      "bytes_ratio": 1.667,
+      "us_dense": 19.18,
+      "us_torch_lowrank": 12.01,
+      "us_triton_lowrank": 31.66,
+      "speedup_triton_vs_dense": 0.606,
+      "speedup_torch_vs_dense": 1.597,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "down_proj",
+      "in": 9728,
+      "out": 2560,
+      "rank": 1792,
+      "M": 1,
+      "bytes_ratio": 1.131,
+      "us_dense": 20.56,
+      "us_torch_lowrank": 20.52,
+      "us_triton_lowrank": 59.76,
+      "speedup_triton_vs_dense": 0.344,
+      "speedup_torch_vs_dense": 1.002,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "down_proj",
+      "in": 9728,
+      "out": 2560,
+      "rank": 1216,
+      "M": 1,
+      "bytes_ratio": 1.667,
+      "us_dense": 20.56,
+      "us_torch_lowrank": 12.29,
+      "us_triton_lowrank": 35.24,
+      "speedup_triton_vs_dense": 0.583,
+      "speedup_torch_vs_dense": 1.673,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "up_proj",
+      "in": 2560,
+      "out": 9728,
+      "rank": 1792,
+      "M": 6,
+      "bytes_ratio": 1.131,
+      "us_dense": 19.2,
+      "us_torch_lowrank": 19.63,
+      "us_triton_lowrank": 55.25,
+      "speedup_triton_vs_dense": 0.348,
+      "speedup_torch_vs_dense": 0.979,
+      "max_abs_err": 0.015625
+    }
+  ],
+  "gate": {
+    "decode_gate": 1.3,
+    "prefill_gate": 2.0,
+    "decode": {
+      "dense+fuse@compiled": {
+        "engine": "compiled",
+        "route": null,
+        "speedup": 0.942,
+        "ci95": [
+          0.852,
+          1.0
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": false
+      },
+      "synthetic_keep0.9_emb0.5@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.825,
+        "ci95": [
+          0.747,
+          0.874
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.9_emb0.5+fuse@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.876,
+        "ci95": [
+          0.867,
+          0.885
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.9_emb0.5+fuse+triton@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.463,
+        "ci95": [
+          0.459,
+          0.466
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.6_emb0.5@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.948,
+        "ci95": [
+          0.941,
+          0.955
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.6_emb0.5+fuse@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.917,
+        "ci95": [
+          0.809,
+          0.989
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.6_emb0.5+fuse+triton@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.559,
+        "ci95": [
+          0.555,
+          0.564
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "spec:/workspace/ql6_runs/stageK/draft06/model.pt:g3@compiled": {
+        "engine": "compiled",
+        "route": "L2",
+        "speedup": 0.613,
+        "ci95": [
+          0.561,
+          0.68
+        ],
+        "quality_ok": true,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": false
+      },
+      "spec:/workspace/ql6_runs/stageK/draft06/model.pt:g5@compiled": {
+        "engine": "compiled",
+        "route": "L2",
+        "speedup": 0.588,
+        "ci95": [
+          0.533,
+          0.652
+        ],
+        "quality_ok": true,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": false
+      }
+    },
+    "decode_PASS": false,
+    "decode_PASS_at_CI_bound": false,
+    "prefill_32k": null,
+    "prefill_PASS": false
+  }
+}
