@@ -107,7 +107,9 @@ def build_prompt(tok, bench, q, mode, fewshot=None):
 
 
 def strip_think(text):
-    return text.split("</think>")[-1]
+    text = text.split("</think>")[-1]
+    # plain (Base) mode: the model keeps writing new few-shot items; keep the first answer
+    return re.split(r"\n\s*(?:Q|Question):", text, maxsplit=1)[0]
 
 
 # ----------------------------------------------------------------------
@@ -182,8 +184,9 @@ def main():
     if a.mode == "think":
         sp = SamplingParams(temperature=0.6, top_p=0.95, top_k=20, max_tokens=max_tok, seed=0)
     else:
-        sp = SamplingParams(temperature=0.0, max_tokens=max_tok,
-                            stop=["\nQuestion:", "\n\nQuestion:", "\n\nQ:"] if a.mode == "plain" else None)
+        # no stop strings: with vLLM they emptied Base-model BBH answers whose few-shot
+        # reasoning starts on a new line; plain-mode output is cut afterwards instead
+        sp = SamplingParams(temperature=0.0, max_tokens=max_tok)
 
     os.makedirs(a.out, exist_ok=True)
     report = {"model": a.model, "name": a.name, "mode": a.mode, "max_tokens": max_tok,
