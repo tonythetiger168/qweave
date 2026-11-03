@@ -195,9 +195,15 @@ def main():
                 per.setdefault(it["task"], []).append(c)
             res["per_task"] = {t: round(100 * sum(v) / len(v), 1) for t, v in per.items()}
             res["acc_macro"] = round(sum(res["per_task"].values()) / len(per), 2)
-        if bench != "gpqa":                                  # GPQA: never store text
-            res["samples"] = [{"id": it["id"], "pred_tail": strip_think(o.outputs[0].text)[-300:]}
-                              for it, o in list(zip(items, outs))[:20]]
+        # keep enough to re-grade offline; GPQA: only the extracted letter, never text
+        if bench == "gpqa":
+            res["extracted"] = [(re.findall(r"Answer\s*[:：]\s*\(?\s*([ABCD])\b",
+                                            strip_think(o.outputs[0].text)) or [""])[-1]
+                                 for o in outs]
+        else:
+            res["samples"] = [{"id": it["id"], "gold": it["gold"],
+                               "pred_tail": strip_think(o.outputs[0].text)[-300:]}
+                              for it, o in zip(items, outs)]
         report["benches"][bench] = res
         print(f"[h2h] {a.name} {bench}: {res['acc']}% (n={res['n']}, "
               f"{res['mean_gen_tokens']} tok, {trunc} truncated, {res['seconds']} s)", flush=True)
