@@ -92,6 +92,11 @@ def load_bbh():
 def build_prompt(tok, bench, q, mode, fewshot=None):
     if bench == "bbh":            # standard BBH: 3-shot CoT, "So the answer is X."
         text = f"{fewshot}\n\nQ: {q}\nA: Let's think step by step."
+        # Match the exemplars' layout: where their reasoning starts on a new line,
+        # end the prompt with that newline. Qwen tokenizes ".\n" as one token, and a
+        # prompt ending at a bare "." made the Base model stop at once on 16 tasks.
+        if fewshot.count("Let's think step by step.\n") > fewshot.count("Let's think step by step. "):
+            text += "\n"
         if mode == "plain":
             return text
         msgs = [{"role": "user", "content": text + "\n\n(Answer the last question in the "
