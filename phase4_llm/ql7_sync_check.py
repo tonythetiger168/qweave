@@ -1,7 +1,7 @@
 """
 QL7 QUICK check: do vLLM rollouts follow the trained HF weights?
 ================================================================
-Perturbs the HF policy (scales one MLP down-projection), pushes the weights
+Perturbs the HF policy (scales every MLP down-projection by 0.9), pushes the weights
 with VLLMEngine.sync, then compares vLLM prompt log-probs of a fixed text to
 the HF log-probs. Pass: mean |diff| < 0.05 nats after the sync, and the
 perturbation is visible (mean |diff| before the sync is larger). GPU only.
@@ -48,8 +48,11 @@ def main():
     d0 = float((vllm_logp(eng, ids) - hf_logp(model, ids)).abs().mean())
     with torch.no_grad():
         for n, p in model.named_parameters():
-            if n.endswith('layers.0.mlp.down_proj.weight') or n.endswith('layers.1.mlp.down_proj.weight'):
-                p.mul_(0.0)
+            # a mild, sane perturbation: zeroing whole MLPs (first version) breaks the
+            # model so badly that bf16-vs-fp32 noise alone gave 0.7 nats after a
+            # correct sync, while training on synced weights improved normally
+            if '.mlp.down_proj.weight' in n:
+                p.mul_(0.9)
     d_before = float((vllm_logp(eng, ids) - hf_logp(model, ids)).abs().mean())
     eng.sync(model)
     d_after = float((vllm_logp(eng, ids) - hf_logp(model, ids)).abs().mean())
