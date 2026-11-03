@@ -74,7 +74,7 @@ push
 if [ "${QUICK:-0}" = 1 ]; then
   L="--limit 20"; GR="--steps 4 --prompts-per-step 4 --num-generations 4 --max-completion 256 --n-gsm 64 --n-math 64"
 else
-  L=""; GR="--steps 400"
+  L=""; GR="--steps 300"
 fi
 E="python phase4_llm/h2h/eval_h2h.py --out $OUT"
 
@@ -82,7 +82,7 @@ stage E_base     60m  $E --model Qwen/Qwen3-0.6B-Base --mode plain   --name qwen
 stage E_nothink  60m  $E --model Qwen/Qwen3-0.6B      --mode nothink --name qwen3-0.6b-nothink $L
 stage E_think    90m  $E --model Qwen/Qwen3-0.6B      --mode think   --name qwen3-0.6b-think $L
 stage E_1p7b     60m  $E --model Qwen/Qwen3-1.7B      --mode nothink --name qwen3-1.7b-nothink $L
-stage G_grpo    180m  python phase4_llm/h2h/grpo_h2h.py --model Qwen/Qwen3-0.6B $GR --out $OUT/grpo-0.6b
+stage G_grpo    240m  python phase4_llm/h2h/grpo_h2h.py --model Qwen/Qwen3-0.6B $GR --out $OUT/grpo-0.6b
 stage E_grpo     60m  $E --model $OUT/grpo-0.6b       --mode nothink --name qweave-grpo-0.6b-nothink $L
 stage R_report   10m  python phase4_llm/h2h/report_h2h.py --dir $OUT --baseline qwen3-0.6b-nothink
 cat $OUT/h2h_table.md 2>/dev/null
