@@ -70,3 +70,12 @@ PIQA 64.8 vs 70.3, WinoGrande 55.8 vs 58.3.
 - Pareto sweep (surpass plan E2) at −5 / −10 / −15 % with the best ablation recipe, to
   find the largest cut that passes the gate on 0.6B.
 - Hold stage B (4B) until a 0.6B recipe passes or comes within ~1 point.
+
+## Follow-up: QL5-R (2026-11-03)
+
+Reading the reports again, the embedding low rank did more damage than the layer cuts
+(A3_embed035 cut the layers half as much as A3_ref and still had a worse pre-heal PPL),
+and the heal left ~70 % of the weights frozen. The reworked recipe keeps the 32k most
+frequent tokens exact, puts only the rare tail in a rank-128 factor, cuts the layers by
+2.9 % instead of 9.5 %, and heals every weight. Diagnosis, recipe and the stage R run:
+[QL5R_PLAN.md](QL5R_PLAN.md).

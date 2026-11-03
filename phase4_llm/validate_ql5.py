@@ -16,6 +16,9 @@ Checks
  10. mixture packer: window length and source proportions
  11. paired bootstrap + gate logic; lm-eval per-sample parsing
  12. end-to-end ql5_compress.py --smoke hits the 20 % saving target
+     (QL5-R default: split embedding, heal-scope all; and the stage A recipe)
+ 13. QL5-R split embedding: exact top rows, exact at full tail rank, tied
+     head == h E^T, param count, save/load roundtrip keeps the index buffers
 """
 
 import json, os, subprocess, sys, tempfile
@@ -25,6 +28,8 @@ import torch
 import torch.nn.functional as F
 
 from phase4_llm.tn_layers import (LowRankLinear, LowRankEmbedding, LowRankHead,
+                                  SplitEmbedding, SplitHead, split_embedding_factor,
+                                  split_embedding_params,
                                   regauge_, weighted_embedding_svd, fake_quant_,
                                   save_compressed, load_compressed)
 from phase4_llm.anneal_alloc import allocate
@@ -234,26 +239,102 @@ ps = per_sample({'gsm8k': [{'doc_id': 0, 'filter': 'strict-match', 'exact_match'
 check("per-sample parser keeps strict-match", ps == {'gsm8k': {'0': 1.0}, 'mmlu_x': {'3': 1.0}})
 
 section("[12] end-to-end smoke")
-with tempfile.TemporaryDirectory() as tdir:
+
+
+def smoke(extra):
+    tdir = tempfile.mkdtemp()
     r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), 'ql5_compress.py'),
                         '--smoke', '--out', tdir, '--regauge-every', '2',
-                        '--quant', 'int8', '--save-model'],
+                        '--quant', 'int8', '--save-model'] + extra,
                        capture_output=True, text=True, timeout=600)
     ok = r.returncode == 0 and os.path.exists(os.path.join(tdir, 'ql5_report.json'))
     if not ok:
         print(r.stdout[-2000:], r.stderr[-2000:])
-    rep = json.load(open(os.path.join(tdir, 'ql5_report.json'))) if ok else {}
+    return tdir, ok, (json.load(open(os.path.join(tdir, 'ql5_report.json'))) if ok else {})
+
+
+for label, extra in [("QL5-R default (split embedding, heal all)", []),
+                     ("stage A recipe (lowrank D1, Fisher, heal tn)",
+                      ['--embed-mode', 'lowrank', '--alloc-weight', 'fisher',
+                       '--heal-scope', 'tn'])]:
+    print(f"  -- {label}")
+    tdir, ok, rep = smoke(extra)
     check("runs and writes a report", ok)
     check("total saving within 1 pt of 20 %", ok and abs(rep['param_saving_pct'] - 20) < 1,
           str(rep.get('param_saving_pct')))
-    check("embedding compressed and layers allocated", ok and rep.get('embed_rank', 0) > 0
+    emb_ok = (rep.get('embed_top', 0) > 0) if not extra else (rep.get('embed_rank', 0) > 0)
+    check("embedding compressed and layers allocated", ok and emb_ok
           and len(rep.get('layer_ranks', {})) > 0)
     check("PPLs finite, quantised copy evaluated", ok and all(
         np.isfinite(rep[k]) for k in ('ppl_dense', 'ppl_compressed', 'ppl_healed'))
         and 'int8' in rep['quant'])
+    if not extra:
+        ht = rep.get('heal_trainable', {})
+        check("heal-scope all trains dense weights in their own LR group",
+              ok and ht.get('dense_params', 0) > 0 and ht.get('factor_params', 0) > 0, str(ht))
     if ok:
         m3 = load_compressed(os.path.join(tdir, 'model.pt'), device='cpu')
-        check("saved smoke model reloads", m3.lm_head.tied is m3.model.embed_tokens)
+        check("saved smoke model reloads, head tied", m3.lm_head.tied is m3.model.embed_tokens)
+
+section("[13] QL5-R split embedding")
+torch.manual_seed(3)
+V, d = 200, 16
+E = torch.randn(V, d)
+freq = torch.zeros(V); freq[torch.randperm(V)[:60]] = torch.rand(60) * 100 + 1
+Xh = torch.randn(300, d) @ torch.randn(d, d)
+Gh = Xh.T @ Xh
+K = 50
+top, Et, At, Bt, rel = split_embedding_factor(E, freq, K, d, Gh)
+se = SplitEmbedding(Et, At.float(), Bt.float(), top)
+check("top-K = the K most frequent tokens",
+      set(top.tolist()) == set(torch.argsort(freq, descending=True)[:K].tolist()))
+# fp32 SVD; unseen tail tokens sit at the 1e-6 frequency floor, so their rows are
+# rebuilt through a 1/sqrt(floor) un-whitening: compare relative to max |E|
+err_full = float((se.weight - E).abs().max() / E.abs().max())
+check("exact at full tail rank (rel. to max |E|)", err_full < 1e-3, f"{err_full:.2e}")
+top, Et, At, Bt, rel = split_embedding_factor(E, freq, K, 4, Gh)
+se = SplitEmbedding(Et, At.float(), Bt.float(), top)
+W = se.weight
+check("top rows exact at low tail rank", torch.equal(W[top], E[top]))
+check("tail rows approximate (rank 4 < 16)", 0 < rel < 1 and
+      not torch.allclose(W[se.tail_idx], E[se.tail_idx], atol=1e-2), f"rel {rel:.3f}")
+ids = torch.randint(0, V, (3, 7))
+check("lookup == rows of the dense weight", torch.allclose(se(ids), W[ids], atol=1e-5))
+sh = SplitHead(se)
+h = torch.randn(3, 7, d)
+check("tied head == h W^T in vocabulary order", torch.allclose(sh(h), h @ W.T, atol=1e-4))
+n_par = sum(p.numel() for p in se.parameters())
+check("param count == K d + (V-K) r + r d",
+      n_par == split_embedding_params(V, d, K, 4), f"{n_par}")
+lo = sh(h).logsumexp(-1).sum(); lo.backward()
+check("gradients reach E_top, A and B",
+      all(p.grad is not None and p.grad.abs().sum() > 0 for p in (se.E_top, se.A, se.B)))
+with tempfile.TemporaryDirectory() as tdir:
+    torch.manual_seed(4)
+    model = q5.tiny_qwen3(128)
+    model.save_pretrained(tdir)
+    E = model.model.embed_tokens.weight.detach()
+    f_ = torch.rand(128) ** 4
+    top, Et, At, Bt, _ = split_embedding_factor(E, f_, 40, 6)
+    new_e = SplitEmbedding(Et.float(), At.float(), Bt.float(), top)
+    model.model.embed_tokens = new_e
+    model.lm_head = SplitHead(new_e)
+    model.config.tie_word_embeddings = False
+    for p_ in model.parameters():
+        p_.data = p_.data.to(torch.bfloat16).float()
+    model = model.eval()
+    ids = torch.randint(0, 128, (2, 12))
+    with torch.no_grad():
+        ref = model(ids).logits.float()
+    save_compressed(model, tdir, os.path.join(tdir, 'model.pt'))
+    m2 = load_compressed(os.path.join(tdir, 'model.pt'), device='cpu', dtype=torch.float32)
+    with torch.no_grad():
+        got = m2(ids).logits.float()
+    check("split model: logits identical after reload", torch.allclose(got, ref, atol=1e-4),
+          f"max diff {(got - ref).abs().max():.2e}")
+    check("split model: index buffers survive (no bf16 rounding)",
+          torch.equal(m2.model.embed_tokens.top_idx, top) and
+          m2.lm_head.tied is m2.model.embed_tokens)
 
 print()
 print("QL5 VALIDATION:", "ALL PASS" if PASS else "FAILURES")
