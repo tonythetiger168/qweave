@@ -113,7 +113,8 @@ def grade_mc(pred, gold):
 
 
 def _norm(s):
-    s = s.strip().strip(".").strip()
+    s = s.replace("**", "").strip().strip(".").strip()
+    s = s.strip("\"'`“”‘’").strip().strip(".").strip()
     s = re.sub(r"^\((\w)\)$", r"\1", s)                     # "(A)" -> "A"
     return re.sub(r"\s+", " ", s).lower()
 
