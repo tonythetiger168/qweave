@@ -44,7 +44,17 @@ The published classical reproductions (Begušić, Gray and Chan, Sci. Adv. 2024;
 
 I could not check their exact ⟨Z62⟩ numbers because arxiv.org is not reachable from this environment.
 
+### Weight truncation does not fix it
+`kicked_ising_expectation_fast(..., max_weight=w)` drops strings with more than w non-identity sites after each ZZ layer. The table shows θh = 0.2π, 20 steps, coefficient threshold 1e-4:
+
+| max weight | 6 | 8 | 10 | 12 | none |
+|---|---|---|---|---|---|
+| ⟨Z62⟩ | 0.652 | 0.555 | 0.555 | 0.410 | 0.374 |
+
+The value moves back toward the uncapped result as w grows, so the coefficient threshold is the real limit.
+The numpy engine applies the cap after every gate, while the compiled engine applies it after each whole ZZ layer. Their capped numbers therefore differ slightly (0.584 vs 0.580 at w = 8, threshold 1e-3).
+
 ## Next steps
-1. Add weight truncation alongside coefficient truncation and repeat the 20-step sweep.
+1. Merge strings related by the circuit's symmetries, as Begušić & Chan do.
 2. Run the compiled engine's hash table on a GPU (one H100, a few dollars) to reach thresholds of 1e-6.
 3. Add Pauli noise (damping each string by its weight) so noisy hardware data can be compared directly.

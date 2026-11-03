@@ -60,11 +60,22 @@ if HAVE_NUMBA:
             h = (h + _ONE) & mask
 
     @nb.njit(cache=True)
-    def _rebuild(keys, coef, n, table, mask):
-        """Drop zero coefficients, compact, and rehash. Returns the new size."""
+    def _rebuild(keys, coef, n, table, mask, max_weight=-1):
+        """Drop zero coefficients (and strings heavier than ``max_weight`` if >= 0),
+        compact, and rehash. Returns the new size."""
+        W = keys.shape[1] // 2
         m = 0
         for i in range(n):
-            if coef[i] != 0.0:
+            keep = coef[i] != 0.0
+            if keep and max_weight >= 0:
+                wt = 0
+                for j in range(W):
+                    v = keys[i, j] | keys[i, W + j]
+                    while v:
+                        v &= v - _ONE
+                        wt += 1
+                keep = wt <= max_weight
+            if keep:
                 if m != i:
                     keys[m, :] = keys[i, :]
                     coef[m] = coef[i]
@@ -172,8 +183,12 @@ def kicked_ising_expectation_fast(n_qubits: int, ops: Dict[int, str],
                                   edges: Sequence[Tuple[int, int]], steps: int,
                                   theta_h: float, min_abs: float = 1e-4,
                                   final_rx: bool = False,
+                                  max_weight: Optional[int] = None,
                                   stats: Optional[dict] = None) -> float:
-    """Same result as ``pauli_prop.kicked_ising_expectation`` at theta_J = -pi/2."""
+    """Same result as ``pauli_prop.kicked_ising_expectation`` at theta_J = -pi/2.
+
+    ``max_weight`` drops strings with more than that many non-identity sites
+    after every ZZ layer (the only place the weight can grow)."""
     if not HAVE_NUMBA:
         raise ImportError("numba is required for the fast engine")
     from phase3_scale.pauli_prop import PauliSum
@@ -195,7 +210,8 @@ def kicked_ising_expectation_fast(n_qubits: int, ops: Dict[int, str],
     for kind in reversed(layers):
         if kind == "zz":
             _zz_layer(t.keys, t.coef, t.n, ea, eb)
-            t.n = _rebuild(t.keys, t.coef, t.n, t.table, t.mask)
+            t.n = _rebuild(t.keys, t.coef, t.n, t.table, t.mask,
+                           -1 if max_weight is None else int(max_weight))
         else:
             for q in range(n_qubits):
                 t.ensure(2 * t.n + 2)
