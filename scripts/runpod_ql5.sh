@@ -9,6 +9,10 @@
 #            pod): retrain the 6 ablations + a -5/-10/-15 % Pareto sweep, all at
 #            25M heal tokens, each followed by its MMLU/GSM8K eval on the same GPU
 #            (~3.5-4 h, ~US$55-65 on Secure 4x H100; use a 270m cap)
+#   STAGE=R  QL5-R rework on Qwen3-0.6B-Base: split embedding (top 32k tokens exact,
+#            tail rank 128) + every weight healed; attribution of stage A's loss
+#            (embedding-only vs layers-only, no heal), 25M ablations, one 100M run
+#            (~3.3 h, ~US$50-60 on Secure 4x H100; use a 220m cap)
 #   QUICK=1  minutes-long version of the chosen stage (checks the pod, ~US$3)
 #
 # Env:  HF_TOKEN (RunPod secret) -> reports pushed to <hf-user>/qweave-runs
@@ -96,6 +100,8 @@ python phase4_llm/validate_ql5.py > $OUT/validate_ql5.log 2>&1; tail -1 $OUT/val
 push
 
 C=phase4_llm/ql5_compress.py
+# stages A/B/C reproduce the stage A recipe; the defaults changed with QL5-R (stage R)
+[ "$STAGE" != R ] && C="$C --embed-mode lowrank --alloc-weight fisher --heal-scope tn"
 E=phase4_llm/eval/run_eval.py
 G=phase4_llm/ql5_gate.py
 if [ "$Q" = 1 ]; then TOK=2e6; ABL=1e6; LIM=40; else TOK=100e6; ABL=25e6; LIM=0; fi
@@ -156,6 +162,47 @@ if [ "$STAGE" = A ]; then
   for d in A1_main A1_int8 A2_dense_ctl A3_ref A3_nofisher A3_noembed A3_webonly \
            A3_regauge A3_embed035; do
     echo "--- gate $d"; gate $OUT/$d 2>&1 | tail -3 | tee $OUT/$d.gate.txt
+  done
+elif [ "$STAGE" = R ]; then
+  M=Qwen/Qwen3-0.6B-Base
+  R="--model $M --save-model"
+  NOHEAL="--heal-tokens 0"
+  # GPU0: dense reference, then WHERE stage A lost MMLU: its embedding alone and its
+  # layer cuts alone (no heal, MMLU only), and the new split embedding alone
+  chain 0 \
+    R0_dense_eval python $E --dense $M --tasks $GATE_TASKS --limit $LIM --log-samples \
+                    --out $OUT/dense_base/eval -- \
+    RA_emb_only   python $C $R $NOHEAL --embed-mode lowrank --embed-keep 0.5 --layer-saving 0 \
+                    --out $OUT/RA_emb_only -- \
+    RA_emb_only_eval ev $OUT/RA_emb_only mmlu -- \
+    RA_layers_only python $C $R $NOHEAL --embed-keep 1 --alloc-weight fisher \
+                    --layer-saving 0.0952 --out $OUT/RA_layers_only -- \
+    RA_layers_only_eval ev $OUT/RA_layers_only mmlu -- \
+    RA_split_only python $C $R $NOHEAL --layer-saving 0 --out $OUT/RA_split_only -- \
+    RA_split_only_eval ev $OUT/RA_split_only mmlu
+  # GPU1: QL5-R main recipe at 25M tokens (compare with stage A's A3_ref)
+  chain 1 \
+    R1_main25     python $C $R --heal-tokens $ABL --out $OUT/R1_main25 -- \
+    R1_main25_eval ev $OUT/R1_main25 $GATE_TASKS
+  # GPU2: ablations at 25M: stage A heal scope (factors only), and a bigger exact block
+  chain 2 \
+    R2_tn25       python $C $R --heal-tokens $ABL --heal-scope tn --out $OUT/R2_tn25 -- \
+    R2_tn25_eval  ev $OUT/R2_tn25 $GATE_TASKS -- \
+    R3_top48k     python $C $R --heal-tokens $ABL --embed-top 49152 --out $OUT/R3_top48k -- \
+    R3_top48k_eval ev $OUT/R3_top48k $GATE_TASKS
+  # GPU3: QL5-R main recipe at 100M tokens (the candidate for the gate)
+  chain 3 \
+    R4_main100    python $C $R --heal-tokens $TOK --eval-every 500 --quant int8 \
+                    --out $OUT/R4_main100 -- \
+    R4_main100_eval ev $OUT/R4_main100 $GATE_TASKS
+  wait
+  for d in R1_main25 R2_tn25 R3_top48k R4_main100; do
+    echo "--- gate $d"; gate $OUT/$d 2>&1 | tail -3 | tee $OUT/$d.gate.txt
+  done
+  for d in RA_emb_only RA_layers_only RA_split_only; do
+    python $G --dense $OUT/dense_base/eval/ql4_dense.json \
+        --compressed $OUT/$d/eval/ql4_compressed.json --ql5-report $OUT/$d/ql5_report.json \
+        --min-saving 0 --out $OUT/$d/gate.json 2>&1 | tail -3 | tee $OUT/$d.gate.txt
   done
 elif [ "$STAGE" = C ]; then
   M=Qwen/Qwen3-0.6B-Base

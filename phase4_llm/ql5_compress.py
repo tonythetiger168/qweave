@@ -24,6 +24,13 @@ Qwen3-0.6B-Base, then Qwen3-4B-Base. QL1.5 (heal_finetune.py) lost
                                               the balanced canonical form
       quantisation never combined          -> --quant int8|fp8 after heal
 
+QL5-R (2026-11-03, docs/QL5R_PLAN.md) changed the defaults after stage A
+missed the gate (MMLU -8.65, GSM8K -7.88): --embed-mode split (top 32k
+tokens exact, tail rank 128 instead of rank 512 for every token),
+--alloc-weight none, --heal-scope all with --lr-dense for the untouched
+weights. Stage A's recipe is
+  --embed-mode lowrank --alloc-weight fisher --heal-scope tn
+
 The QL4 harness evaluates the saved model:
   python phase4_llm/eval/run_eval.py --dense Qwen/Qwen3-0.6B-Base \\
       --compressed OUT/model.pt --limit 0 --log-samples --out OUT/eval
@@ -45,6 +52,8 @@ from torch.utils.checkpoint import checkpoint
 
 from phase4_llm import heal_finetune as hf
 from phase4_llm.tn_layers import (LowRankLinear, LowRankEmbedding, LowRankHead,
+                                  SplitEmbedding, SplitHead, split_embedding_factor,
+                                  split_embedding_params,
                                   whitened_svd, lowrank_from_svd,
                                   weighted_embedding_svd, regauge_,
                                   quantize_model_, save_compressed)
@@ -226,8 +235,17 @@ def main():
     # compression
     ap.add_argument('--total-saving', type=float, default=0.2,
                     help='fraction of TOTAL model params to remove (0 = dense control)')
+    ap.add_argument('--embed-mode', choices=['split', 'lowrank'], default='split',
+                    help='split (QL5-R): top --embed-top tokens exact, tail at '
+                         '--embed-tail-rank; lowrank (stage A D1): whole matrix at '
+                         'the rank given by --embed-keep')
+    ap.add_argument('--embed-top', type=int, default=32768,
+                    help='split: tokens kept as exact rows (by calibration frequency)')
+    ap.add_argument('--embed-tail-rank', type=int, default=128,
+                    help='split: rank of the rare-token tail')
     ap.add_argument('--embed-keep', type=float, default=0.5,
-                    help='kept fraction of embedding/LM-head params (1 = untouched)')
+                    help='lowrank: kept fraction of embedding/LM-head params; '
+                         '1 = embedding untouched (either mode)')
     ap.add_argument('--embed-floor', type=float, default=1e-6,
                     help='frequency floor so unseen tokens keep a direction')
     ap.add_argument('--freq-windows', type=int, default=2048,
@@ -238,7 +256,12 @@ def main():
     ap.add_argument('--rank-align', type=int, default=64)
     ap.add_argument('--alloc', choices=['greedy', 'sa', 'sqa'], default='greedy',
                     help='greedy: near-optimal on this separable knapsack (F5)')
-    ap.add_argument('--alloc-weight', choices=['fisher', 'none'], default='fisher')
+    ap.add_argument('--alloc-weight', choices=['fisher', 'none'], default='none',
+                    help='none since QL5-R: Fisher weighting gave the worst healed PPL '
+                         'in stage A (26.3 vs 24.3)')
+    ap.add_argument('--layer-saving', type=float, default=-1,
+                    help='fraction of attention/MLP params to remove; -1 = whatever '
+                         '--total-saving still needs after the embedding')
     ap.add_argument('--calib', type=int, default=256, help='calibration windows')
     ap.add_argument('--calib-mix', default=DEFAULT_MIX)
     ap.add_argument('--no-decontam', action='store_true')
@@ -254,8 +277,12 @@ def main():
     ap.add_argument('--kd-alpha', type=float, default=0.7)
     ap.add_argument('--kd-t', type=float, default=1.0)
     ap.add_argument('--kd-chunk', type=int, default=4096)
-    ap.add_argument('--heal-scope', choices=['tn', 'all'], default='tn',
-                    help='tn: low-rank factors + norms + biases; all: every param')
+    ap.add_argument('--heal-scope', choices=['tn', 'all'], default='all',
+                    help='tn: low-rank factors + norms + biases (stage A); all: every '
+                         'param, uncompressed weights at --lr-dense')
+    ap.add_argument('--lr-dense', type=float, default=1e-5,
+                    help='heal-scope all: LR of weights that were NOT factorised '
+                         '(the dense control in stage A used 2e-5)')
     ap.add_argument('--regauge-every', type=int, default=0,
                     help='G1: re-gauge every N steps (0 = off)')
     ap.add_argument('--eval-every', type=int, default=0)
@@ -283,6 +310,8 @@ def main():
         args.seq, args.batch = min(args.seq, 64), min(args.batch, 4)
         args.calib, args.freq_windows = min(args.calib, 16), min(args.freq_windows, 16)
         args.rank_align = min(args.rank_align, 8)
+        args.embed_top = min(args.embed_top, V // 2)
+        args.embed_tail_rank = min(args.embed_tail_rank, 8)
         args.kd_chunk = min(args.kd_chunk, 37)        # odd size: exercises the tail
         model_id = os.path.join(args.out, 'tiny_base')
         if main_rank:
@@ -350,8 +379,30 @@ def main():
             f"{'on' if args.alloc_weight == 'fisher' else 'off'} ({time.time() - t0:.0f}s)")
 
         # ---- D1: embedding / LM head ----
-        emb_saved, plan_emb = 0, None
-        if args.embed_keep < 1:
+        emb_saved, plan_emb, plan_split = 0, None, None
+        if args.embed_keep < 1 and args.embed_mode == 'split':
+            E = emb.weight.detach()
+            Vv, d = E.shape
+            r_t = max(1, _align(args.embed_tail_rank, min(args.rank_align, args.embed_tail_rank)))
+            new_p = split_embedding_params(Vv, d, args.embed_top, r_t)
+            if new_p < Vv * d:
+                top_idx, E_top, At, Bt, rel = split_embedding_factor(
+                    E, freq, args.embed_top, r_t, hgram if tied else None,
+                    floor=args.embed_floor)
+                plan_split = (top_idx, E_top.float(), At.float(), Bt.float())
+                emb_saved = emb.weight.numel() - new_p
+                if not tied:
+                    log("[ql5] WARNING: split mode compresses the input embedding only "
+                        "(untied head kept dense)")
+                cov = float(freq[top_idx].sum() / freq.sum().clamp_min(1))
+                report.update(embed_top=len(top_idx), embed_tail_rank=r_t,
+                              embed_tail_weighted_rel_err=round(rel, 5),
+                              embed_top_calib_coverage=round(cov, 6),
+                              embed_tokens_seen=int((freq > 0).sum()))
+                log(f"[ql5] D1 split embedding: top {len(top_idx)} exact "
+                    f"(covers {cov:.4%} of calibration tokens, {int((freq > 0).sum())} "
+                    f"distinct seen), tail rank {r_t} rel. err {rel:.4f}, saves {emb_saved:,}")
+        elif args.embed_keep < 1:
             E = emb.weight.detach()
             Vv, d = E.shape
             r_e = _align(args.embed_keep * Vv * d / (Vv + d), args.rank_align)
@@ -376,7 +427,8 @@ def main():
         if need < 0:
             log(f"[ql5] WARNING: embedding alone saves {emb_saved / total_before:.1%} > "
                 f"--total-saving {args.total_saving:.1%}; raise --embed-keep")
-        layer_saving = max(0.0, need / cand_params)
+        layer_saving = max(0.0, need / cand_params) if args.layer_saving < 0 \
+            else args.layer_saving
         ratios = [float(r) for r in args.ratios.split(',')]
         L, K = len(cands), len(ratios) + 1
         err = torch.zeros(L, K); par = torch.zeros(L, K)
@@ -420,6 +472,14 @@ def main():
                 new = lowrank_from_svd(US.to(device), Bf.to(device), r,
                                        bias=mod.bias).to(device)
                 assert _replace(model, mod, new), name
+            if plan_split is not None:
+                top_idx, E_top, At, Bt = plan_split
+                new_e = SplitEmbedding(E_top.to(device), At.to(device), Bt.to(device),
+                                       top_idx)
+                model.model.embed_tokens = new_e
+                if tied:
+                    model.lm_head = SplitHead(new_e)
+                    model.config.tie_word_embeddings = False   # shared via module
             if plan_emb is not None:
                 r_e, A, B = plan_emb[:3]
                 new_e = LowRankEmbedding(A.to(device), B.to(device))
@@ -433,7 +493,7 @@ def main():
                 report['embed_weighted_rel_err'] = round(plan_emb[3], 5)
         del factors
         log(f"[ql5] compressed {len(plan)}/{len(cands)} layers"
-            f"{' + embedding/head' if plan_emb is not None else ''} "
+            f"{' + embedding/head' if plan_emb is not None or plan_split is not None else ''} "
             f"({time.time() - t0:.0f}s)")
 
     total_after = count_params(model)
@@ -452,20 +512,36 @@ def main():
     report['heal_tokens'] = steps * tokens_per_step
     curve = []
     if steps > 0:
+        is_factor = lambda n_: n_.endswith(('.A', '.B', '.E_top'))
         if args.heal_scope == 'tn':
             for n_, p in model.named_parameters():
-                p.requires_grad_(n_.endswith(('.A', '.B', 'bias')) or 'norm' in n_)
+                p.requires_grad_(is_factor(n_) or n_.endswith('bias') or 'norm' in n_)
         else:
             for p in model.parameters():
                 p.requires_grad_(True)
         params = [p for p in model.parameters() if p.requires_grad]
+        # factorised weights (and norms/biases) at --lr; with heal-scope all the
+        # untouched dense weights get --lr-dense, so the uncompressed 90+ % of the
+        # network can adapt around the cuts without drifting far from the teacher.
+        # A dense control (--total-saving 0) has no factors: everything at --lr.
+        fac = [p for n_, p in model.named_parameters() if p.requires_grad and
+               (is_factor(n_) or n_.endswith('bias') or 'norm' in n_ or not compress)]
+        fid = {id(p) for p in fac}
+        den = [p for p in params if id(p) not in fid]
+        groups = [{'params': fac, 'lr': args.lr}] + \
+                 ([{'params': den, 'lr': args.lr_dense}] if den else [])
+        report['heal_trainable'] = {'factor_params': sum(p.numel() for p in fac),
+                                    'dense_params': sum(p.numel() for p in den)}
         if world > 1 and device.type == 'cuda':
             from torch.distributed.optim import ZeroRedundancyOptimizer
-            opt = ZeroRedundancyOptimizer(params, optimizer_class=torch.optim.AdamW,
+            opt = ZeroRedundancyOptimizer(groups[0]['params'],
+                                          optimizer_class=torch.optim.AdamW,
                                           lr=args.lr, weight_decay=0.0,
                                           betas=(0.9, 0.95))
+            for g in groups[1:]:
+                opt.add_param_group(g)
         else:
-            opt = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0,
+            opt = torch.optim.AdamW(groups, lr=args.lr, weight_decay=0.0,
                                     betas=(0.9, 0.95))
         warm = max(1, int(steps * args.warmup))
         sched = torch.optim.lr_scheduler.LambdaLR(
@@ -481,7 +557,7 @@ def main():
                 sw[k] = float(v)
         hp = packer(args.heal_mix, seed=args.seed + 1, r=rank, w=world)
         gauged = [m for m in model.modules()
-                  if isinstance(m, (LowRankLinear, LowRankEmbedding))]
+                  if isinstance(m, (LowRankLinear, LowRankEmbedding, SplitEmbedding))]
         if device.type == 'cuda':
             torch.cuda.reset_peak_memory_stats(device)
         model.train()

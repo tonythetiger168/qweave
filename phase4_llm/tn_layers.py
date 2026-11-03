@@ -470,6 +470,127 @@ def weighted_embedding_svd(E: torch.Tensor, freq: torch.Tensor,
 
 
 # ======================================================================
+# QL5-R: split embedding -- frequent tokens exact, rare tokens low rank
+# ----------------------------------------------------------------------
+# Stage A showed the plain D1 low rank is the costly part of the -20 %:
+# embedding rank 512 -> 384 (with FEWER layer cuts) raised pre-heal PPL
+# 38 -> 47, although the frequency-weighted error was only 0.3-0.5 %.
+# That error is dominated by the few thousand most frequent tokens; the
+# moderately rare tokens that carry knowledge (terms, names, units) are
+# projected onto a subspace fitted to the frequent ones and lose their
+# identity, on the input side and as LM-head rows. The split form keeps
+# the top-K tokens (by calibration frequency) as exact full rows and puts
+# only the long tail (mostly scripts and words an English/math mixture
+# never uses) in a rank-r factor pair:
+#     params = K d + (V - K) r + r d      (K = 32768, r = 128 on 0.6B:
+#                                          49 M instead of 156 M)
+# Same module serves as tied LM head (SplitHead), so tying is preserved.
+# ======================================================================
+class SplitEmbedding(torch.nn.Module):
+    """Rows `top_idx` exact in `E_top` (K, d); the other rows ~ A B with
+    A (V-K, r), B (r, d). `slot[v]` = position of token v in [top; tail]."""
+
+    def __init__(self, E_top: torch.Tensor, A: torch.Tensor, B: torch.Tensor,
+                 top_idx: torch.Tensor):
+        super().__init__()
+        V = E_top.shape[0] + A.shape[0]
+        top_idx = top_idx.long().cpu()
+        mask = torch.zeros(V, dtype=torch.bool); mask[top_idx] = True
+        tail_idx = torch.arange(V)[~mask]
+        slot = torch.empty(V, dtype=torch.long)
+        slot[top_idx] = torch.arange(len(top_idx))
+        slot[tail_idx] = len(top_idx) + torch.arange(len(tail_idx))
+        self.E_top = torch.nn.Parameter(E_top.contiguous())
+        self.A = torch.nn.Parameter(A.contiguous())
+        self.B = torch.nn.Parameter(B.contiguous())
+        dev = E_top.device
+        self.register_buffer('top_idx', top_idx.to(dev))
+        self.register_buffer('tail_idx', tail_idx.to(dev))
+        self.register_buffer('slot', slot.to(dev))
+        self.num_embeddings, self.embedding_dim = V, E_top.shape[1]
+
+    @property
+    def rank(self) -> int:
+        return self.B.shape[0]
+
+    @property
+    def n_top(self) -> int:
+        return self.E_top.shape[0]
+
+    @property
+    def weight(self) -> torch.Tensor:          # dense (V, d), for checks only
+        W = self.E_top.new_empty(self.num_embeddings, self.embedding_dim)
+        W[self.top_idx] = self.E_top
+        W[self.tail_idx] = (self.A @ self.B).to(W.dtype)
+        return W
+
+    def forward(self, ids):
+        pos = self.slot[ids]
+        K = self.n_top
+        top = torch.nn.functional.embedding(pos.clamp(max=K - 1), self.E_top)
+        tail = torch.nn.functional.embedding((pos - K).clamp(min=0), self.A) @ self.B
+        return torch.where((pos < K)[..., None], top, tail.to(top.dtype))
+
+    def regauge(self) -> torch.Tensor:
+        return regauge_(self.A, self.B)
+
+
+class SplitHead(torch.nn.Module):
+    """LM head tied to a SplitEmbedding: logits in [top; tail] slot order,
+    then gathered back to vocabulary order."""
+
+    def __init__(self, tied: SplitEmbedding):
+        super().__init__()
+        self.tied = tied
+        self.in_features, self.out_features = tied.embedding_dim, tied.num_embeddings
+
+    @property
+    def rank(self) -> int:
+        return self.tied.rank
+
+    @property
+    def weight(self) -> torch.Tensor:
+        return self.tied.weight
+
+    def forward(self, h):
+        t = self.tied
+        F_ = torch.nn.functional
+        top = F_.linear(h, t.E_top)
+        tail = F_.linear(F_.linear(h, t.B), t.A)
+        z = torch.cat([top, tail.to(top.dtype)], dim=-1)
+        return z.index_select(-1, t.slot)
+
+
+def split_embedding_factor(E: torch.Tensor, freq: torch.Tensor, n_top: int,
+                           rank: int, gram: Optional[torch.Tensor] = None,
+                           floor: float = 1e-6):
+    """Top `n_top` tokens by `freq` kept exact; the rest factored at `rank`
+    with weighted_embedding_svd (frequency x hidden-state weighting) over
+    the tail rows only. Returns (top_idx, E_top, A, B, tail_rel_err) where
+    tail_rel_err is the weighted relative error of the tail block."""
+    V = E.shape[0]
+    n_top = min(int(n_top), V)
+    order = torch.argsort(freq.double().cpu() + 1e-12 * torch.arange(V, 0, -1,
+                          dtype=torch.float64), descending=True)   # ties: low id first
+    top_idx = order[:n_top].sort().values
+    mask = torch.zeros(V, dtype=torch.bool); mask[top_idx] = True
+    tail_idx = torch.arange(V)[~mask]
+    E_cpu = E.detach()
+    E_top = E_cpu[top_idx.to(E.device)].clone()
+    if len(tail_idx) == 0:
+        return top_idx, E_top, E_top.new_zeros(0, rank), E_top.new_zeros(rank, E.shape[1]), 0.0
+    At, Sig, Bt = weighted_embedding_svd(E_cpu[tail_idx.to(E.device)],
+                                         freq[tail_idx].to(E.device), gram, floor=floor)
+    r = min(rank, len(Sig))
+    rel = float((Sig[r:] ** 2).sum() / (Sig ** 2).sum().clamp_min(1e-30))
+    return top_idx, E_top, At[:, :r].to(E.dtype), Bt[:r].to(E.dtype), rel
+
+
+def split_embedding_params(V: int, d: int, n_top: int, rank: int) -> int:
+    return n_top * d + (V - n_top) * rank + rank * d
+
+
+# ======================================================================
 # QL5: weight-only fake quantisation on top of low rank (INT8 / FP8)
 # ======================================================================
 @torch.no_grad()
@@ -532,6 +653,10 @@ def compression_plan(model) -> dict:
             plan[n] = [m.out_features, m.in_features, m.rank, m.bias is not None]
         elif isinstance(m, LowRankEmbedding):
             plan[n] = ['emb', m.num_embeddings, m.embedding_dim, m.rank]
+        elif isinstance(m, SplitEmbedding):
+            plan[n] = ['semb', m.num_embeddings, m.embedding_dim, m.rank, m.n_top]
+        elif isinstance(m, SplitHead):
+            plan[n] = ['shead', names[id(m.tied)]]
         elif isinstance(m, LowRankHead):
             plan[n] = ['head', m.out_features, m.in_features, m.rank,
                        names[id(m.tied)] if m.tied is not None else None]
@@ -540,7 +665,8 @@ def compression_plan(model) -> dict:
 
 def save_compressed(model, model_id: str, path: str):
     torch.save({'model_id': model_id, 'plan': compression_plan(model),
-                'state_dict': {k: v.detach().to(torch.bfloat16).cpu()
+                'state_dict': {k: (v.detach().to(torch.bfloat16) if v.is_floating_point()
+                                   else v.detach()).cpu()
                                for k, v in model.state_dict().items()}}, path)
 
 
@@ -553,10 +679,16 @@ def load_compressed(path: str, device='cuda', dtype=torch.bfloat16):
     z = lambda *s: torch.zeros(*s, dtype=dtype)
     plan = ck['plan']
     # embeddings first: a tied head points at an already rebuilt embedding
-    for name, e in sorted(plan.items(), key=lambda kv: kv[1][0] != 'emb'):
+    for name, e in sorted(plan.items(), key=lambda kv: kv[1][0] not in ('emb', 'semb')):
         parent, _, child = name.rpartition('.')
         if e[0] == 'emb':
             new = LowRankEmbedding(z(e[1], e[3]), z(e[3], e[2]))
+        elif e[0] == 'semb':
+            V_, d_, r_, K_ = e[1:5]
+            new = SplitEmbedding(z(K_, d_), z(V_ - K_, r_), z(r_, d_),
+                                 ck['state_dict'][name + '.top_idx'])
+        elif e[0] == 'shead':
+            new = SplitHead(model.get_submodule(e[1]))
         elif e[0] == 'head':
             new = (LowRankHead(tied=model.get_submodule(e[4])) if e[4]
                    else LowRankHead(z(e[1], e[3]), z(e[3], e[2])))
@@ -564,7 +696,7 @@ def load_compressed(path: str, device='cuda', dtype=torch.bfloat16):
             o, i, r, hb = e
             new = LowRankLinear(z(o, r), z(r, i), z(o) if hb else None)
         setattr(model.get_submodule(parent), child, new)
-    if any(e[0] == 'head' for e in plan.values()):
+    if any(e[0] in ('head', 'shead') for e in plan.values()):
         model.config.tie_word_embeddings = False   # factors are shared already
     model.load_state_dict(ck['state_dict'], strict=True)
     return model.to(device).eval()
