@@ -84,7 +84,7 @@ FSDP / multi-GPU and the RL annealing variant move to QL7.
   our `trajectory.py` channels as the "thermal bath" sampler; see arXiv 2409.12240 for the
   TN-annealing formalism). Acceptance: matches/beats AdamW on a small RLHF/GRPO run at ≤ 0.7× GPU-hours.
 - **CUDA specifics**: bf16 params + fp32 MPO cores, CUDA graphs for the einsum chain, pin memory,
-  overlap comm; benchmark matrix recorded in `docs/QL2_BENCHMARKS.md`.
+  overlap comm; benchmark matrix recorded in [QL_RESULTS.md §2](QL_RESULTS.md) (QL2 section).
 
 ### QL3 — Entanglement Diagnostics & QSA Attention (Month 3) ✅ GATE PASSED (2026-10-28)
 **Result**: QSA top-16 at 16K: 1.49× vs FlashAttention-SDPA at +0.96 % PPL; 3.47× at
