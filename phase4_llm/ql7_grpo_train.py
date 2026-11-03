@@ -39,6 +39,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from phase4_llm import ql7_rl as R  # noqa: E402
 
 TEMPLATE = "Question: {q}\nAnswer: Let's think step by step."
+# a base model keeps writing new "Question: ..." blocks after its answer; generation
+# stops there (vLLM) and grading only reads the text before it (all engines)
+STOP = ["\nQuestion:", "Question:"]
+
+
+def answer_text(text):
+    for s in STOP:
+        text = text.split(s)[0]
+    return text
 
 
 # ------------------------------------------------------------------ data
@@ -142,7 +151,7 @@ class VLLMEngine:
     def generate(self, prompts, n, max_new, temperature, seed):
         from vllm import SamplingParams, TokensPrompt
         sp = SamplingParams(n=n, temperature=temperature, top_p=1.0, max_tokens=max_new,
-                            seed=seed)
+                            seed=seed, stop=STOP)
         outs = self.llm.generate([TokensPrompt(prompt_token_ids=p) for p in prompts], sp,
                                  use_tqdm=False)
         return [list(c.token_ids) for o in outs for c in o.outputs]
@@ -161,7 +170,9 @@ class VLLMEngine:
         return None
 
     def sync(self, model):
-        named = [(n, p.detach()) for n, p in model.named_parameters()]
+        # vLLM keeps bf16 weights and (0.33) warns but does not reliably load fp32
+        # tensors into bf16 params: cast the fp32 master weights first
+        named = [(n, p.detach().to(torch.bfloat16)) for n, p in model.named_parameters()]
         m = self._model()
         if m is not None:
             m.load_weights(named)
@@ -205,7 +216,7 @@ def evaluate(engine, tok, rows, max_new, bs=256):
         chunk = rows[i:i + bs]
         prompts = [tok.encode(TEMPLATE.format(q=r['q'])) for r in chunk]
         comps = engine.generate(prompts, 1, max_new, 0.0, 0)
-        ok += [R.math_reward(tok.decode(c), r['gold']) for c, r in zip(comps, chunk)]
+        ok += [R.math_reward(answer_text(tok.decode(c)), r['gold']) for c, r in zip(comps, chunk)]
     return ok
 
 
@@ -232,7 +243,9 @@ def main(argv=None):
                     help='Beta(prior, prior) pass-rate prior (U-shaped: rates are bimodal)')
     ap.add_argument('--prompt-decay', type=float, default=0.995,
                     help='per-step decay of pass-rate estimates toward the prior')
-    ap.add_argument('--solver-sweeps', type=int, default=20)
+    ap.add_argument('--solver-sweeps', type=int, default=8,
+                    help='SA/SQA sweeps; QUICK showed 20 sweeps x 16x16 SQA on a 256 pool '
+                         'took longer than a training phase (51%% of step time)')
     ap.add_argument('--overlap-select', type=int, default=1,
                     help='solve the next prompt QUBO on CPU during training (1) or inline (0)')
     ap.add_argument('--dynamic-sampling', action='store_true',
@@ -286,7 +299,8 @@ def main(argv=None):
     ps = R.PromptSelector(texts, a.group, method=a.select_prompts, pool_factor=a.pool_factor,
                           lam=a.lam, explore=a.explore, seed=a.seed, decay=a.prompt_decay,
                           prior=(a.prior, a.prior),
-                          solver_kw={'sweeps': a.solver_sweeps}
+                          solver_kw={'sweeps': a.solver_sweeps, 'replicas': 8,
+                                     **({'trotter': 8} if a.select_prompts == 'sqa' else {})}
                           if a.select_prompts in ('sa', 'sqa') else {})
     k = a.layer_k or max(1, len(blocks) // 2)
     ls = R.LayerSelector(len(blocks), k, method=a.select_layers, seed=a.seed,
@@ -328,8 +342,9 @@ def main(argv=None):
                         for p in b:
                             p.requires_grad_(True)
                     pi = list(range(a.probe_prompts))
+                    # sampled (vLLM forbids n>1 with greedy); fixed once generated
                     pc = engine.generate([prompt_ids[i] for i in pi], 2, min(a.max_new, 128),
-                                         0.0, 0)
+                                         1.0, step)
                     pp = [prompt_ids[i] for i in pi for _ in range(2)]
 
                     def lf():                     # SFT-style NLL on fixed probe text
@@ -350,7 +365,7 @@ def main(argv=None):
         rollouts += len(comps)
         with meter.phase('score'):
             rf = smoke_reward if a.smoke else R.math_reward
-            r = torch.tensor([rf(tok.decode(c), train_rows[i]['gold'])
+            r = torch.tensor([rf(answer_text(tok.decode(c)), train_rows[i]['gold'])
                               for j, i in enumerate(idx) for c in comps[j * a.group:(j + 1) * a.group]]
                              ).view(len(idx), a.group)
             ps.update(idx, r)

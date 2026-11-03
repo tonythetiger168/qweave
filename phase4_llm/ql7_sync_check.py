@@ -54,7 +54,9 @@ def main():
     eng.sync(model)
     d_after = float((vllm_logp(eng, ids) - hf_logp(model, ids)).abs().mean())
     res = {'diff_initial': d0, 'diff_perturbed_before_sync': d_before,
-           'diff_after_sync': d_after, 'pass': d_after < 0.05 and d_before > 2 * d_after}
+           'diff_after_sync': d_after,
+           # bf16 vLLM vs fp32-master HF differ by ~0.03 nats even when in sync
+           'pass': d_after < max(0.05, 2 * d0) and d_before > 5 * d_after}
     json.dump(res, open(a.out, 'w'), indent=1)
     print(json.dumps(res), flush=True)
     sys.stdout.flush()

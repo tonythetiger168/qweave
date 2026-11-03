@@ -22,7 +22,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from phase4_llm import ql7_rl as R  # noqa: E402
-from phase4_llm.ql7_grpo_train import TEMPLATE, load_gsm8k, synth_rows  # noqa: E402
+from phase4_llm.ql7_grpo_train import STOP, TEMPLATE, answer_text, load_gsm8k, synth_rows  # noqa: E402
 
 
 def main(argv=None):
@@ -59,7 +59,7 @@ def main(argv=None):
                             for r in train])
 
     def reward(prompts, completions, gold, **kw):
-        return [R.math_reward(c, g) for c, g in zip(completions, gold)]
+        return [R.math_reward(answer_text(c), g) for c, g in zip(completions, gold)]
 
     cuda = torch.cuda.is_available() and not a.smoke
     per_dev = max(a.group, min(a.micro, a.prompts * a.group))
@@ -71,7 +71,8 @@ def main(argv=None):
         beta=0.0, loss_type='dapo', epsilon=0.2, epsilon_high=0.28, num_iterations=1,
         use_vllm=cuda, vllm_mode='colocate', vllm_gpu_memory_utilization=0.35,
         bf16=cuda, use_cpu=not cuda, logging_steps=10, save_strategy='no', report_to='none',
-        seed=a.seed, max_grad_norm=1.0, weight_decay=0.0, adam_beta2=0.99)
+        seed=a.seed, max_grad_norm=1.0, weight_decay=0.0, adam_beta2=0.99,
+        generation_kwargs={'stop': STOP} if cuda else None)
     tr = GRPOTrainer(model=model, reward_funcs=reward, args=cfg, train_dataset=ds,
                      processing_class=tok)
     if cuda:

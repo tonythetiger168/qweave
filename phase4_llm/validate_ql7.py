@@ -119,6 +119,9 @@ def t6():
     ok = all((R.extract_answer(t) == v) for t, v in cases)
     ok &= R.math_reward('... #### 72', R.gsm8k_gold('blah\n#### 72')) == 1.0
     ok &= R.math_reward('... #### 71', 72.0) == 0.0
+    from phase4_llm.ql7_grpo_train import answer_text
+    # a base model's next made-up "Question:" must not change the graded answer
+    ok &= R.math_reward(answer_text('so 5+2 = 7. The answer is 7.\nQuestion: what is 9+9?\nAnswer: 18'), 7.0) == 1.0
     check('6 GSM8K answer extraction / grading', ok)
 
 
