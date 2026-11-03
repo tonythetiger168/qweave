@@ -1,0 +1,19 @@
+{
+  "name": "DiracLM-4B",
+  "version": "0.1",
+  "base_model": "Qwen/Qwen3-4B-Base",
+  "base_license": "Apache-2.0",
+  "license": "Apache-2.0",
+  "hf_repo": "DiracLM/DiracLM-4B",
+  "notes": "Primary release. GRPO on GSM8K/MATH train from Qwen3-4B-Base with the QL7 prompt selector, QSA for long-context prefill, QL5 compression only if the rework passes on 4B.",
+  "controls": {
+    "plain_base": "Qwen/Qwen3-4B-Base",
+    "same_recipe_dense": "QL7 'base' arm: same GRPO data and steps, uniform prompt sampling",
+    "official_post_trained": "Qwen/Qwen3-4B"
+  },
+  "components": {
+    "qsa": {"gate_report": "ql3_4b/ql3_bench.json", "config": {"topk": 16, "block": 128, "local": 2, "sink": 1, "min_len": 16384}},
+    "ql7": {"gate_report": "ql7_4b/gate.json", "config": {"arm": null, "measured_on": "Qwen/Qwen3-4B-Base"}},
+    "ql5": {"gate_report": "ql5_4b/gate.json", "config": {}}
+  }
+}

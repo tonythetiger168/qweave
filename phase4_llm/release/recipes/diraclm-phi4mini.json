@@ -1,0 +1,15 @@
+{
+  "name": "DiracLM-Phi4-mini",
+  "version": "0.1",
+  "base_model": "microsoft/Phi-4-mini-instruct",
+  "base_license": "MIT",
+  "license": "MIT",
+  "hf_repo": "DiracLM/DiracLM-Phi4-mini",
+  "notes": "Generalization check on a second architecture. v0.1 ships QSA only (no RL), so its weights equal the base and the release is a runtime config plus eval report.",
+  "controls": {"plain_base": "microsoft/Phi-4-mini-instruct"},
+  "components": {
+    "qsa": {"gate_report": "ql3_phi4mini/ql3_bench.json", "config": {"topk": 16, "block": 128, "local": 2, "sink": 1, "min_len": 16384}},
+    "ql7": {"enabled": false},
+    "ql5": {"enabled": false}
+  }
+}
