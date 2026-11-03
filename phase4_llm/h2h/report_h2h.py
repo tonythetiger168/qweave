@@ -55,8 +55,9 @@ def main():
                 row += [f"{acc:.1f}", "baseline", "—"]
             else:
                 lo, hi = paired_ci(x, y)
-                rel = 100 * (acc - accb) / accb if accb else float("nan")
-                row += [f"{acc:.1f}", f"{acc - accb:+.1f} [{lo:+.1f}, {hi:+.1f}]", f"{rel:+.1f} %"]
+                rel = 100 * (acc - accb) / accb if accb else None
+                row += [f"{acc:.1f}", f"{acc - accb:+.1f} [{lo:+.1f}, {hi:+.1f}]",
+                        f"{rel:+.1f} %" if rel is not None else "n/a"]
                 summary[name][b] = {"acc": acc, "delta": acc - accb, "ci": [lo, hi], "rel_pct": rel}
             summary[name].setdefault("acc", {})[b] = acc
         lines.append("| " + " | ".join(row) + " |")

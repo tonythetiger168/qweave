@@ -24,8 +24,9 @@ import argparse, json, os, random, re, time
 MATH_INSTR = "Please reason step by step, and put your final answer within \\boxed{}."
 MC_INSTR = ("Think step by step, then finish with a line of the form "
             "'Answer: X' where X is one of A, B, C, D.")
-BBH_INSTR = ("Think step by step, then finish with a line of the form "
-             "'So the answer is <answer>.'")
+BBH_INSTR = ("Think step by step, then finish with one final line of the form "
+             "'So the answer is X.' where X is only your final answer (for a "
+             "multiple-choice question, the option letter such as (A)).")
 BBH_TASKS = [
     "boolean_expressions", "causal_judgement", "date_understanding",
     "disambiguation_qa", "dyck_languages", "formal_fallacies",
@@ -113,6 +114,7 @@ def grade_mc(pred, gold):
 
 
 def _norm(s):
+    s = re.sub(r"</?answer>?|<answer|>$", "", s, flags=re.IGNORECASE)
     s = s.replace("**", "").strip().strip(".").strip()
     s = s.strip("\"'`“”‘’").strip().strip(".").strip()
     s = re.sub(r"^\((\w)\)$", r"\1", s)                     # "(A)" -> "A"
@@ -124,7 +126,10 @@ def grade_bbh(pred, gold):
                    flags=re.IGNORECASE | re.MULTILINE)
     if not m:
         return False
-    ans = _norm(m[-1].replace("**", ""))
+    last = m[-1]
+    while re.search(r"answer is", last, flags=re.IGNORECASE):   # "answer is: **So the answer is (D)**"
+        last = re.split(r"answer is\s*:?", last, flags=re.IGNORECASE)[-1]
+    ans = _norm(last.replace("**", ""))
     g = _norm(gold)
     if ans == g:
         return True
