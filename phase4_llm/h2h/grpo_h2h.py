@@ -70,7 +70,8 @@ def main():
     ap.add_argument("--max-completion", type=int, default=1536)
     ap.add_argument("--n-gsm", type=int, default=7473)
     ap.add_argument("--n-math", type=int, default=7500)
-    ap.add_argument("--vllm-mem", type=float, default=0.35)
+    ap.add_argument("--vllm-mem", type=float, default=0.30)
+    ap.add_argument("--micro-batch", type=int, default=16)
     ap.add_argument("--out", default="/workspace/h2h/grpo-0.6b")
     a = ap.parse_args()
 
@@ -82,7 +83,7 @@ def main():
     print(f"[grpo] {len(ds)} training prompts", flush=True)
 
     completions_per_step = a.prompts_per_step * a.num_generations
-    micro = min(64, completions_per_step)
+    micro = min(a.micro_batch, completions_per_step)   # 64 OOMed at ~600-token completions
     want = dict(
         output_dir=a.out, learning_rate=a.lr, lr_scheduler_type="constant_with_warmup",
         warmup_steps=10, max_steps=a.steps, per_device_train_batch_size=micro,
@@ -103,13 +104,21 @@ def main():
                           reward_funcs=[correctness_reward, boxed_format_reward],
                           processing_class=tok)
     t0 = time.time()
-    trainer.train()
+    crashed = None
+    try:
+        trainer.train()
+    except Exception as e:                 # keep (and evaluate) what was trained so far
+        crashed = f"{type(e).__name__}: {str(e)[:300]}"
+        print(f"[grpo] training stopped early: {crashed}", flush=True)
+        import gc
+        gc.collect(); torch.cuda.empty_cache()
     hours = (time.time() - t0) / 3600
     os.makedirs(a.out, exist_ok=True)
     trainer.save_model(a.out)
     tok.save_pretrained(a.out)
     hist = [h for h in trainer.state.log_history if "reward" in h or "rewards/correctness_reward/mean" in h]
-    json.dump({"model": a.model, "steps": a.steps, "lr": a.lr,
+    json.dump({"model": a.model, "steps": a.steps, "steps_done": trainer.state.global_step,
+               "crashed": crashed, "lr": a.lr, "micro_batch": micro,
                "prompts_per_step": a.prompts_per_step, "num_generations": a.num_generations,
                "train_hours": round(hours, 3),
                "gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else None,

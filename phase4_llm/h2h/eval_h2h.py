@@ -191,6 +191,11 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     report = {"model": a.model, "name": a.name, "mode": a.mode, "max_tokens": max_tok,
               "limit": a.limit, "benches": {}}
+    prev = f"{a.out}/{a.name}.json"
+    if os.path.exists(prev):                  # re-scoring one benchmark keeps the others
+        old = json.load(open(prev))
+        if old.get("mode") == a.mode and old.get("model") == a.model:
+            report["benches"] = old.get("benches", {})
     for bench in a.benches.split(","):
         t0 = time.time()
         items = LOADERS[bench]()

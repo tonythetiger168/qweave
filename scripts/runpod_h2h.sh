@@ -10,6 +10,7 @@
 #       BRANCH (default claude/h2h-fermiqllm), QUICK=1 for a ~15-minute pod check
 set -u
 export PIP_ROOT_USER_ACTION=ignore HF_HOME=/workspace/hf TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 OUT=/workspace/h2h; mkdir -p $OUT
 exec > >(tee -a $OUT/run.log) 2>&1
 POD=${RUNPOD_POD_ID:-local}
@@ -46,8 +47,9 @@ push_retry() { # final upload: retried, and always before the pod is stopped
   echo "push failed 5x -- reports stay on the pod disk ($OUT)"; return 1
 }
 
-stage() {   # stage <name> <timeout> <cmd...>
+stage() {   # stage <name> <timeout> <cmd...>   (ONLY="a b" runs a subset)
   local name=$1 to=$2; shift 2
+  if [ -n "${ONLY:-}" ] && ! [[ " $ONLY " == *" $name "* ]]; then return; fi
   echo "=== $(date -u +%H:%M:%S) [$name] $*"
   local t=$(date +%s)
   timeout "$to" "$@" > "$OUT/$name.log" 2>&1
@@ -78,11 +80,26 @@ else
 fi
 E="python phase4_llm/h2h/eval_h2h.py --out $OUT"
 
+# PREV_RUN=<pod>_h2h: reuse that run's finished eval JSONs instead of re-running them
+if [ -n "${PREV_RUN:-}" ]; then
+  python - <<PY
+import os
+from huggingface_hub import HfApi, hf_hub_download
+api = HfApi(token=os.environ["HF_TOKEN"]); repo = api.whoami()["name"] + "/qweave-runs"
+for f in api.list_repo_files(repo, repo_type="dataset"):
+    if f.startswith("runs/${PREV_RUN}/") and f.count("/") == 2 and f.endswith(".json") \
+            and "summary" not in f:
+        p = hf_hub_download(repo, f, repo_type="dataset", token=os.environ["HF_TOKEN"])
+        os.system(f"cp {p} $OUT/"); print("reused", f)
+PY
+fi
+
 stage E_base     60m  $E --model Qwen/Qwen3-0.6B-Base --mode plain   --name qwen3-0.6b-base $L
 stage E_nothink  60m  $E --model Qwen/Qwen3-0.6B      --mode nothink --name qwen3-0.6b-nothink $L
+stage E_base_bbh 30m  $E --model Qwen/Qwen3-0.6B-Base --mode plain   --name qwen3-0.6b-base --benches bbh $L
 stage E_think    90m  $E --model Qwen/Qwen3-0.6B      --mode think   --name qwen3-0.6b-think $L
 stage E_1p7b     60m  $E --model Qwen/Qwen3-1.7B      --mode nothink --name qwen3-1.7b-nothink $L
-stage G_grpo    240m  python phase4_llm/h2h/grpo_h2h.py --model Qwen/Qwen3-0.6B $GR --out $OUT/grpo-0.6b
+stage G_grpo    270m  python phase4_llm/h2h/grpo_h2h.py --model Qwen/Qwen3-0.6B $GR --out $OUT/grpo-0.6b
 stage U_model    20m  python phase4_llm/h2h/upload_model.py $OUT/grpo-0.6b qweave-h2h-grpo-0.6b
 stage E_grpo     60m  $E --model $OUT/grpo-0.6b       --mode nothink --name qweave-grpo-0.6b-nothink $L
 stage R_report   10m  python phase4_llm/h2h/report_h2h.py --dir $OUT --baseline qwen3-0.6b-nothink
