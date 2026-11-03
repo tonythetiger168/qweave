@@ -83,6 +83,7 @@ stage E_nothink  60m  $E --model Qwen/Qwen3-0.6B      --mode nothink --name qwen
 stage E_think    90m  $E --model Qwen/Qwen3-0.6B      --mode think   --name qwen3-0.6b-think $L
 stage E_1p7b     60m  $E --model Qwen/Qwen3-1.7B      --mode nothink --name qwen3-1.7b-nothink $L
 stage G_grpo    240m  python phase4_llm/h2h/grpo_h2h.py --model Qwen/Qwen3-0.6B $GR --out $OUT/grpo-0.6b
+stage U_model    20m  python phase4_llm/h2h/upload_model.py $OUT/grpo-0.6b qweave-h2h-grpo-0.6b
 stage E_grpo     60m  $E --model $OUT/grpo-0.6b       --mode nothink --name qweave-grpo-0.6b-nothink $L
 stage R_report   10m  python phase4_llm/h2h/report_h2h.py --dir $OUT --baseline qwen3-0.6b-nothink
 cat $OUT/h2h_table.md 2>/dev/null

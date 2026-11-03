@@ -24,9 +24,6 @@ import argparse, json, os, random, re, time
 MATH_INSTR = "Please reason step by step, and put your final answer within \\boxed{}."
 MC_INSTR = ("Think step by step, then finish with a line of the form "
             "'Answer: X' where X is one of A, B, C, D.")
-BBH_INSTR = ("Think step by step, then finish with one final line of the form "
-             "'So the answer is X.' where X is only your final answer (for a "
-             "multiple-choice question, the option letter such as (A)).")
 BBH_TASKS = [
     "boolean_expressions", "causal_judgement", "date_understanding",
     "disambiguation_qa", "dyck_languages", "formal_fallacies",
@@ -67,21 +64,41 @@ def load_gpqa(seed=0):
     return items
 
 
+BBH_COT_URL = "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/main/cot-prompts/{}.txt"
+
+
+def bbh_fewshot(task):
+    """Official 3-shot chain-of-thought exemplars (Suzgun et al. 2022), header stripped."""
+    import urllib.request
+    txt = urllib.request.urlopen(BBH_COT_URL.format(task), timeout=60).read().decode()
+    return txt.split("-----", 1)[-1].strip()
+
+
 def load_bbh():
     from datasets import load_dataset
     items = []
     for t in BBH_TASKS:
+        few = bbh_fewshot(t)
         ds = load_dataset("lukaemon/bbh", t, split="test")
         for i, r in enumerate(ds):
-            items.append({"id": f"{t}/{i}", "task": t, "q": r["input"], "gold": r["target"]})
+            items.append({"id": f"{t}/{i}", "task": t, "q": r["input"], "gold": r["target"],
+                          "fewshot": few})
     return items
 
 
 # ----------------------------------------------------------------------
 # prompts
 # ----------------------------------------------------------------------
-def build_prompt(tok, bench, q, mode):
-    instr = {"math500": MATH_INSTR, "gpqa": MC_INSTR, "bbh": BBH_INSTR}[bench]
+def build_prompt(tok, bench, q, mode, fewshot=None):
+    if bench == "bbh":            # standard BBH: 3-shot CoT, "So the answer is X."
+        text = f"{fewshot}\n\nQ: {q}\nA: Let's think step by step."
+        if mode == "plain":
+            return text
+        msgs = [{"role": "user", "content": text + "\n\n(Answer the last question in the "
+                 "same format as the examples, ending with 'So the answer is ...'.)"}]
+        return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                       enable_thinking=(mode == "think"))
+    instr = {"math500": MATH_INSTR, "gpqa": MC_INSTR}[bench]
     if mode == "plain":
         return f"Question: {q}\n{instr}\nAnswer: Let's think step by step."
     msgs = [{"role": "user", "content": f"{q}\n\n{instr}"}]
@@ -166,7 +183,7 @@ def main():
         sp = SamplingParams(temperature=0.6, top_p=0.95, top_k=20, max_tokens=max_tok, seed=0)
     else:
         sp = SamplingParams(temperature=0.0, max_tokens=max_tok,
-                            stop=["\nQuestion:", "\n\nQuestion:"] if a.mode == "plain" else None)
+                            stop=["\nQuestion:", "\n\nQuestion:", "\n\nQ:"] if a.mode == "plain" else None)
 
     os.makedirs(a.out, exist_ok=True)
     report = {"model": a.model, "name": a.name, "mode": a.mode, "max_tokens": max_tok,
@@ -177,7 +194,7 @@ def main():
         if a.limit:
             items = items[:a.limit] if bench != "bbh" else \
                 [it for k, it in enumerate(items) if k % max(1, len(items) // a.limit) == 0][:a.limit]
-        prompts = [build_prompt(tok, bench, it["q"], a.mode) for it in items]
+        prompts = [build_prompt(tok, bench, it["q"], a.mode, it.get("fewshot")) for it in items]
         outs = llm.generate(prompts, sp)
         correct, ntoks, trunc = [], [], 0
         for it, o in zip(items, outs):
