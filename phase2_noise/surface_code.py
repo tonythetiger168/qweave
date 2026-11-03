@@ -90,9 +90,13 @@ class RotatedSurfaceCode:
         return hx, hz
 
 
-def rotated_memory_z_circuit(distance: int, rounds: int, p: float):
+def rotated_memory_z_circuit(distance: int, rounds: int, p):
     """
     Build a noisy Z-memory experiment as a ``stim.Circuit``.
+
+    ``p`` is either a float (uniform circuit noise, every location fails with
+    probability p) or a ``noise_profiles.NoiseProfile`` with separate gate,
+    measurement, reset and idle rates.
 
     Each round: data depolarization, H on X-measure qubits, four CNOT
     layers, H, measure-and-reset of all measure qubits. Detectors compare
@@ -101,6 +105,11 @@ def rotated_memory_z_circuit(distance: int, rounds: int, p: float):
     measurements. Observable 0 = logical Z.
     """
     import stim
+    from phase2_noise.noise_profiles import NoiseProfile
+
+    prof = p if isinstance(p, NoiseProfile) else NoiseProfile.uniform(float(p))
+    idle = prof.idle_pauli()
+    p = max(prof.p1, prof.p2, prof.p_meas, prof.p_reset)   # "any noise at all"
 
     code = RotatedSurfaceCode(distance)
     idx = code.index
@@ -116,14 +125,14 @@ def rotated_memory_z_circuit(distance: int, rounds: int, p: float):
 
     def noisy(name, targets, p1=None, p2=None):
         c.append(name, targets)
-        if p > 0 and p1 is not None:
-            c.append("DEPOLARIZE1", targets, p)
-        if p > 0 and p2 is not None:
-            c.append("DEPOLARIZE2", targets, p)
+        if p1 is not None and prof.p1 > 0:
+            c.append("DEPOLARIZE1", targets, prof.p1)
+        if p2 is not None and prof.p2 > 0:
+            c.append("DEPOLARIZE2", targets, prof.p2)
 
     c.append("R", data + meas)
-    if p > 0:
-        c.append("X_ERROR", data + meas, p)
+    if prof.p_reset > 0:
+        c.append("X_ERROR", data + meas, prof.p_reset)
 
     # CNOT layers: X checks control the data qubit, Z checks are targets
     layers = []
@@ -140,17 +149,21 @@ def rotated_memory_z_circuit(distance: int, rounds: int, p: float):
         layers.append(pairs)
 
     def one_round(first: bool):
-        if p > 0:
+        # data noise per round: uniform model = depolarizing at p; a device
+        # profile = idling through the previous measure+reset window
+        if idle is not None:
+            c.append("PAULI_CHANNEL_1", data, list(idle))
+        elif prof.name.startswith("uniform") and p > 0:
             c.append("DEPOLARIZE1", data, p)
         noisy("H", xm, p1=True)
         for pairs in layers:
             noisy("CX", pairs, p2=True)
         noisy("H", xm, p1=True)
-        if p > 0:
-            c.append("X_ERROR", meas, p)
+        if prof.p_meas > 0:
+            c.append("X_ERROR", meas, prof.p_meas)
         c.append("MR", meas)
-        if p > 0:
-            c.append("X_ERROR", meas, p)
+        if prof.p_reset > 0:
+            c.append("X_ERROR", meas, prof.p_reset)
         # Z checks sit at the end of the measurement record
         for j, m in enumerate(code.z_meas):
             rec = -n_meas + len(xm) + j
@@ -174,8 +187,8 @@ def rotated_memory_z_circuit(distance: int, rounds: int, p: float):
         c = saved
         c.append(stim.CircuitRepeatBlock(rounds - 1, body))
 
-    if p > 0:
-        c.append("X_ERROR", data, p)
+    if prof.p_meas > 0:
+        c.append("X_ERROR", data, prof.p_meas)
     c.append("M", data)
     n_data = len(data)
     data_pos = {coord: i for i, coord in enumerate(code.data)}
