@@ -1,0 +1,459 @@
+{
+  "model": "Qwen/Qwen3-0.6B-Base",
+  "device": "cuda",
+  "dtype": "torch.bfloat16",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "torch": "2.12.1+cu129",
+  "new_tokens": 256,
+  "n_prompts": 12,
+  "decode": [
+    {
+      "variant": "dense",
+      "engine": "compiled",
+      "route": null,
+      "tok_s": 370.3
+    },
+    {
+      "variant": "dense+fuse",
+      "engine": "compiled",
+      "route": null,
+      "tok_s": 361.6,
+      "speedup": 0.977,
+      "ci95": [
+        0.957,
+        0.997
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.9_emb0.5",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 279.6,
+      "speedup": 0.755,
+      "ci95": [
+        0.74,
+        0.771
+      ],
+      "vs_matched_dense": "dense",
+      "speedup_vs_matched": 0.755,
+      "ci95_vs_matched": [
+        0.74,
+        0.771
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.9_emb0.5+fuse",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 296.6,
+      "speedup": 0.801,
+      "ci95": [
+        0.785,
+        0.815
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.82,
+      "ci95_vs_matched": [
+        0.805,
+        0.836
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.9_emb0.5+fuse+triton",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "triton": {
+        "linear": 140,
+        "glu_mlp": 28
+      },
+      "tok_s": 167.2,
+      "speedup": 0.452,
+      "ci95": [
+        0.442,
+        0.462
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.462,
+      "ci95_vs_matched": [
+        0.458,
+        0.471
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.6_emb0.5",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 284.2,
+      "speedup": 0.768,
+      "ci95": [
+        0.752,
+        0.784
+      ],
+      "vs_matched_dense": "dense",
+      "speedup_vs_matched": 0.768,
+      "ci95_vs_matched": [
+        0.752,
+        0.784
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.6_emb0.5+fuse",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "tok_s": 296.4,
+      "speedup": 0.801,
+      "ci95": [
+        0.783,
+        0.818
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.82,
+      "ci95_vs_matched": [
+        0.817,
+        0.822
+      ]
+    },
+    {
+      "variant": "synthetic_keep0.6_emb0.5+fuse+triton",
+      "engine": "compiled",
+      "route": "L1",
+      "synthetic": true,
+      "triton": {
+        "linear": 140,
+        "glu_mlp": 28
+      },
+      "tok_s": 202.8,
+      "speedup": 0.548,
+      "ci95": [
+        0.536,
+        0.56
+      ],
+      "vs_matched_dense": "dense+fuse",
+      "speedup_vs_matched": 0.561,
+      "ci95_vs_matched": [
+        0.56,
+        0.562
+      ]
+    }
+  ],
+  "spec": [],
+  "prefill": [],
+  "roofline": {
+    "dense": {
+      "bytes_per_token": {
+        "linear": 880803840.0,
+        "lowrank": 0.0,
+        "embed": 2048.0,
+        "head": 311164928.0,
+        "norm": 131072.0,
+        "kv_cache": 17891328.0,
+        "total": 1209993216.0
+      },
+      "ceiling": 1.0,
+      "params": 596049920,
+      "audit": {
+        "n_bonds": 0,
+        "misaligned": {},
+        "align": 64
+      }
+    },
+    "synthetic_keep0.9_emb0.5": {
+      "bytes_per_token": {
+        "linear": 0.0,
+        "lowrank": 807403520.0,
+        "embed": 1049600.0,
+        "head": 156631040.0,
+        "norm": 131072.0,
+        "kv_cache": 17891328.0,
+        "total": 983106560.0
+      },
+      "ceiling": 1.231,
+      "params": 482082816,
+      "audit": {
+        "n_bonds": 197,
+        "misaligned": {},
+        "align": 64
+      }
+    },
+    "synthetic_keep0.6_emb0.5": {
+      "bytes_per_token": {
+        "linear": 0.0,
+        "lowrank": 513802240.0,
+        "embed": 1049600.0,
+        "head": 156631040.0,
+        "norm": 131072.0,
+        "kv_cache": 17891328.0,
+        "total": 689505280.0
+      },
+      "ceiling": 1.755,
+      "params": 335282176,
+      "audit": {
+        "n_bonds": 197,
+        "misaligned": {},
+        "align": 64
+      }
+    }
+  },
+  "layers": [
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "rank": 640,
+      "M": 1,
+      "bytes_ratio": 1.067,
+      "us_dense": 3.54,
+      "us_torch_lowrank": 6.94,
+      "us_triton_lowrank": 19.08,
+      "speedup_triton_vs_dense": 0.185,
+      "speedup_torch_vs_dense": 0.509,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "q_proj",
+      "in": 1024,
+      "out": 2048,
+      "rank": 384,
+      "M": 1,
+      "bytes_ratio": 1.778,
+      "us_dense": 3.54,
+      "us_torch_lowrank": 6.22,
+      "us_triton_lowrank": 15.33,
+      "speedup_triton_vs_dense": 0.231,
+      "speedup_torch_vs_dense": 0.569,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "k_proj",
+      "in": 1024,
+      "out": 1024,
+      "rank": 448,
+      "M": 1,
+      "bytes_ratio": 1.143,
+      "us_dense": 3.52,
+      "us_torch_lowrank": 6.26,
+      "us_triton_lowrank": 16.74,
+      "speedup_triton_vs_dense": 0.21,
+      "speedup_torch_vs_dense": 0.562,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "k_proj",
+      "in": 1024,
+      "out": 1024,
+      "rank": 320,
+      "M": 1,
+      "bytes_ratio": 1.6,
+      "us_dense": 3.52,
+      "us_torch_lowrank": 6.1,
+      "us_triton_lowrank": 13.12,
+      "speedup_triton_vs_dense": 0.268,
+      "speedup_torch_vs_dense": 0.576,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "o_proj",
+      "in": 2048,
+      "out": 1024,
+      "rank": 640,
+      "M": 1,
+      "bytes_ratio": 1.067,
+      "us_dense": 4.88,
+      "us_torch_lowrank": 8.55,
+      "us_triton_lowrank": 21.2,
+      "speedup_triton_vs_dense": 0.23,
+      "speedup_torch_vs_dense": 0.57,
+      "max_abs_err": 0.0078125
+    },
+    {
+      "layer": "o_proj",
+      "in": 2048,
+      "out": 1024,
+      "rank": 384,
+      "M": 1,
+      "bytes_ratio": 1.778,
+      "us_dense": 4.88,
+      "us_torch_lowrank": 7.37,
+      "us_triton_lowrank": 15.38,
+      "speedup_triton_vs_dense": 0.317,
+      "speedup_torch_vs_dense": 0.662,
+      "max_abs_err": 0.015625
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "rank": 704,
+      "M": 1,
+      "bytes_ratio": 1.091,
+      "us_dense": 3.66,
+      "us_torch_lowrank": 7.2,
+      "us_triton_lowrank": 20.47,
+      "speedup_triton_vs_dense": 0.179,
+      "speedup_torch_vs_dense": 0.509,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "rank": 448,
+      "M": 1,
+      "bytes_ratio": 1.714,
+      "us_dense": 3.66,
+      "us_torch_lowrank": 6.35,
+      "us_triton_lowrank": 16.68,
+      "speedup_triton_vs_dense": 0.22,
+      "speedup_torch_vs_dense": 0.577,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "rank": 704,
+      "M": 1,
+      "bytes_ratio": 1.091,
+      "us_dense": 5.71,
+      "us_torch_lowrank": 8.87,
+      "us_triton_lowrank": 20.95,
+      "speedup_triton_vs_dense": 0.273,
+      "speedup_torch_vs_dense": 0.644,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "down_proj",
+      "in": 3072,
+      "out": 1024,
+      "rank": 448,
+      "M": 1,
+      "bytes_ratio": 1.714,
+      "us_dense": 5.71,
+      "us_torch_lowrank": 8.48,
+      "us_triton_lowrank": 17.29,
+      "speedup_triton_vs_dense": 0.33,
+      "speedup_torch_vs_dense": 0.673,
+      "max_abs_err": 0.0
+    },
+    {
+      "layer": "up_proj",
+      "in": 1024,
+      "out": 3072,
+      "rank": 704,
+      "M": 6,
+      "bytes_ratio": 1.091,
+      "us_dense": 3.55,
+      "us_torch_lowrank": 6.79,
+      "us_triton_lowrank": 22.54,
+      "speedup_triton_vs_dense": 0.158,
+      "speedup_torch_vs_dense": 0.523,
+      "max_abs_err": 0.015625
+    }
+  ],
+  "gate": {
+    "decode_gate": 1.3,
+    "prefill_gate": 2.0,
+    "decode": {
+      "dense+fuse@compiled": {
+        "engine": "compiled",
+        "route": null,
+        "speedup": 0.977,
+        "ci95": [
+          0.957,
+          0.997
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": false
+      },
+      "synthetic_keep0.9_emb0.5@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.755,
+        "ci95": [
+          0.74,
+          0.771
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.9_emb0.5+fuse@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.801,
+        "ci95": [
+          0.785,
+          0.815
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.9_emb0.5+fuse+triton@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.452,
+        "ci95": [
+          0.442,
+          0.462
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.6_emb0.5@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.768,
+        "ci95": [
+          0.752,
+          0.784
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.6_emb0.5+fuse@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.801,
+        "ci95": [
+          0.783,
+          0.818
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      },
+      "synthetic_keep0.6_emb0.5+fuse+triton@compiled": {
+        "engine": "compiled",
+        "route": "L1",
+        "speedup": 0.548,
+        "ci95": [
+          0.536,
+          0.56
+        ],
+        "quality_ok": false,
+        "pass_point": false,
+        "pass_ci": false,
+        "speed_only": true
+      }
+    },
+    "decode_PASS": false,
+    "decode_PASS_at_CI_bound": false,
+    "prefill_32k": null,
+    "prefill_PASS": false
+  }
+}

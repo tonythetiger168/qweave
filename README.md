@@ -20,7 +20,7 @@ checked against a named baseline and measured results checked into the repo.
 
 ---
 
-## Status and latest results (2026-10-30)
+## Status and latest results (2026-11-02)
 
 All GPU numbers are from RunPod H100 80GB runs; raw reports are in
 [`results/`](results/README.md). Negative results are kept on purpose.
@@ -33,8 +33,9 @@ Several phases are still in open pull requests, linked in the table.
 | I | State-vector, Clifford, MPS simulators | ✅ on `main` | All validation suites pass on CPU and H100 |
 | II | Noise, DEM + PyMatching decoding | ✅ on `main` (fixed in [#1](https://github.com/tonythetiger168/qweave/pull/1)) | Decoder bug fixed: d=3 repetition code at p=0.1% goes from 2.0% (worse than undecoded 0.65%) to **0.00%**; 33/33 single faults decode correctly |
 | III | VQE, QAOA, QPE/IPEA, backends | ✅ on `main` (GPU-host test fix in [#1](https://github.com/tonythetiger168/qweave/pull/1)) | 27 checks pass on CPU and H100 |
-| E1 | Rotated surface code + gross code [[144,12,12]], numpy BP+OSD | 🔄 [#7](https://github.com/tonythetiger168/qweave/pull/7) | Matches Stim's generator (d=3: 0.0167 vs 0.0168); threshold ≈ 1.2%, Λ = 2.0 at p=0.5%; gross code 2.5% vs 9.0% for 12 d=7 patches with 4.1× fewer data qubits |
-| E5 | GPU state vector + decoder timings | 🔄 [#8](https://github.com/tonythetiger168/qweave/pull/8) | Torch SV correct on CUDA, ~129× numpy at n=26. cuStateVec path: 3.5–9.4× faster than torch (~3.5 TB/s effective read+write), up to n=32. Gross-code decoding p=4% per shot: CUDA-Q QEC 7 µs, `ldpc` CPU 40 µs, qweave batched torch 50 µs |
+| E1 | Rotated surface code, gross code [[144,12,12]] with its circuit-level syndrome cycle, BP+OSD and Relay-BP | ✅ on `main` ([#7](https://github.com/tonythetiger168/qweave/pull/7), [#10](https://github.com/tonythetiger168/qweave/pull/10)) | Surface code matches Stim's generator (d=3: 0.0167 vs 0.0168), threshold ≈ 1.2%, Λ = 2.0 at p=0.5%. Gross code circuit-level pseudo-threshold ≈ 0.75% (published 0.8%). Relay-BP vs BP+OSD-CS7 at p=0.4%: 0/600 vs 6/600 failures, 121 vs 450 ms/shot on CPU |
+| E5 | GPU state vector + GPU decoders | ✅ on `main` ([#8](https://github.com/tonythetiger168/qweave/pull/8)) | Torch SV correct on CUDA, ~129× numpy at n=26. cuStateVec backend: 9.4× torch at n=30, fits n=32. Batched GPU BP+OSD on the gross code (p=4%, 100k batch): **2.6 µs/shot** vs `ldpc` 32.7 and CUDA-Q QEC 6.2; for one syndrome at a time `ldpc` (14 µs) stays fastest |
+| E2 | Pauli propagation engine, IBM 127-qubit kicked Ising | 🔄 [#11](https://github.com/tonythetiger168/qweave/pull/11) | Matches the exact light-cone values within 1e-3 at 5 steps on 127 qubits; at 20 steps converges for θh = π/8 but not yet for θh ≥ 0.2π |
 
 ### Quantum-inspired LLM track (Qwen3)
 
@@ -45,16 +46,20 @@ Several phases are still in open pull requests, linked in the table.
 | QL3 | Quantum-inspired sparse attention (QSA) | ✅ **gate passed** | 1.49× FlashAttention at 16K with +0.96% PPL; 3.47× at 32K (kernel only) |
 | QL4 | Open benchmark harness | ✅ delivered | lm-eval + robustness suite; shows PPL hides reasoning collapse (in-domain heal: PPL better than dense, GSM8K 0.0) |
 | QL5 | Knowledge-preserving compression (Qwen3-0.6B-Base) | 🔄 gate **FAIL** ([#4](https://github.com/tonythetiger168/qweave/pull/4)) | At −20% params: MMLU −8.7 pt [−9.5, −7.8], GSM8K −7.9 pt (gate −2 / −5); the dense control trained the same way does not drop |
-| QL6 | Batch-1 decode speed | 🔄 gate **FAIL** ([#5](https://github.com/tonythetiger168/qweave/pull/5)) | Low rank is 0.84–0.95× dense at batch 1 (kernel-bound, not byte-bound); 4B speculative decoding 0.81× after harness fixes; 32K prefill end to end 1.52× (needs 2×). Triton kernels (stage K) still running |
+| QL6 | Batch-1 decode speed | 🔄 gate **FAIL**, closed as negative ([#5](https://github.com/tonythetiger168/qweave/pull/5)) | Low rank is 0.80–0.95× dense at batch 1 (kernel-bound, not byte-bound); custom Triton low-rank kernels are worse (0.45× on 0.6B, 0.46× on 4B); 4B speculative decoding 0.61–0.81×; 32K prefill end to end 1.52× (needs 2×) |
+| QL7 | QUBO prompt/layer selection for GRPO (≤0.75× GPU-hours) | 🔄 code + CPU tests, no GPU run yet ([#12](https://github.com/tonythetiger168/qweave/pull/12)) | Amdahl bound: a backward-only lever cannot reach 0.75×; on a toy task QUBO prompt selection did worse than uniform |
 
 **Bottom line so far.** Tensor-network ideas only work on LLM weights after
 activation-aware whitening, and even then small models lose knowledge and math
-first. Quantum-inspired annealing loses to greedy on separable problems. The one
-clear win is QSA sparse attention at long context. Full write-ups:
+first, and low-rank layers do not speed up batch-1 decode on H100 even with custom
+kernels. Quantum-inspired annealing loses to greedy on separable problems. The one
+clear win is QSA sparse attention at long context. On the QEC side, qweave now
+reproduces published surface-code and gross-code numbers and has a GPU decoder
+faster than CUDA-Q QEC at large batch. Full write-ups:
 [QL results](docs/QL_RESULTS.md), [surpass plan](docs/FERMIQLLM_SURPASS_PLAN.md),
 [QL5 results](https://github.com/tonythetiger168/qweave/blob/claude/ql5-quality/docs/QL5_RESULTS.md),
 [QL6 run plan + results](https://github.com/tonythetiger168/qweave/blob/claude/ql6-decode/docs/QL6_RUN_PLAN.md),
-[E5 GPU results](https://github.com/tonythetiger168/qweave/blob/claude/e5-gpu-bench/docs/E5_GPU_RESULTS.md).
+[E1 gross code](docs/E1_GROSS_CIRCUIT.md), [E5 GPU results](docs/E5_GPU_RESULTS.md).
 
 ### Plans
 - [Simulator survey](docs/SURVEY.md) and [2025–2026 quantum research plan](docs/QUANTUM_RESEARCH_PLAN_2026.md) 
