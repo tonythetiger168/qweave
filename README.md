@@ -14,7 +14,6 @@ checked against a named baseline and measured results checked into the repo.
   [FermiQLLM 1.0](docs/FERMIQLLM_GLOBAL_INVESTIGATION.md)'s claims.
 
 **Hardware project:** [quantum-rd-plan](https://github.com/tonythetiger168/quantum-rd-plan) ·
-**Live roadmap:** [interactive site](https://deploy-mpxqplkexa.cn-beijing-plat.fcapp.run) ·
 **License:** [Apache-2.0](LICENSE)
 
 ![Roadmap Demo](demo.gif)
