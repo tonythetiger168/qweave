@@ -58,6 +58,9 @@ to use those lessons to beat it **on public leaderboards** with equal compute.
 - **Acceptance:** ≤0.75× GPU-hours at the same final score; otherwise publish it as a negative result.
 
 ### QL8 — Public, reproducible, on the leaderboards
+> 2026-11-03: the release is now planned as **DiracLM** (open-weights model line); see
+> [QL8_RELEASE_PLAN.md](QL8_RELEASE_PLAN.md).
+
 - Weights, configs and logs all on HF; `scripts/runpod_all_phases.sh` reruns everything with one command.
 - Submit to public evaluations such as the Open LLM Leaderboard, with an item-by-item comparison against FermiQLLM's public material.
 - Quantum-hardware interface: keep the Phase II DEM + PyMatching pipeline (now fixed) for future QPU subroutine experiments;

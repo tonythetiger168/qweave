@@ -147,14 +147,40 @@ QSA_CFG = {'topk': 8, 'block': 128, 'local': 2, 'sink': 1,
            'per_layer_topk': None, 'min_len': 1024}
 
 
+def _is_plain_causal(mask: torch.Tensor) -> bool:
+    """True if a square causal(+padding) mask from transformers has no padded
+    keys, so the is_causal / QSA paths are equivalent to it. Padding shows up
+    as disallowed keys in the last query row, which sees every real key; only
+    that row is checked to keep this O(N) at 16K+ context."""
+    if mask.shape[-1] != mask.shape[-2]:
+        return False
+    last = mask[..., -1, :]
+    allowed = last if last.dtype == torch.bool else last > torch.finfo(last.dtype).min / 2
+    return bool(allowed.all())
+
+
 def qsa_hf_attention(module, query, key, value, attention_mask, scaling=None,
                      dropout=0.0, **kw):
     """AttentionInterface-compatible: returns (B, N, H, D), None."""
-    N = query.shape[2]
+    N, Nk = query.shape[2], key.shape[2]
+    gqa = key.shape[1] != query.shape[1]
+    if Nk != N or (attention_mask is not None and not _is_plain_causal(attention_mask)):
+        # Decode / chunked prefill against a KV cache, or padded batches.
+        # SDPA's is_causal aligns the mask top-left, which for a 1-token query
+        # would attend only to key 0, so use the mask (or a bottom-right
+        # causal mask) instead. QSA itself only runs on a fresh, unpadded
+        # prefill; generation after it is dense.
+        mask = attention_mask
+        if mask is None:
+            mask = torch.ones(N, Nk, dtype=torch.bool, device=query.device).tril(Nk - N)
+        elif mask.dtype != torch.bool and mask.shape[-1] != Nk:
+            mask = mask[..., :Nk]
+        out = F.scaled_dot_product_attention(query, key, value, attn_mask=mask,
+                                             scale=scaling, enable_gqa=gqa)
+        return out.transpose(1, 2).contiguous(), None
     if N < QSA_CFG['min_len']:          # short sequences -> dense SDPA
         out = F.scaled_dot_product_attention(
-            query, key, value, is_causal=True, scale=scaling,
-            enable_gqa=key.shape[1] != query.shape[1])
+            query, key, value, is_causal=True, scale=scaling, enable_gqa=gqa)
         return out.transpose(1, 2).contiguous(), None
     topk = QSA_CFG['topk']
     plt = QSA_CFG['per_layer_topk']
