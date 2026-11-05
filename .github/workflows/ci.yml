@@ -27,6 +27,8 @@ jobs:
         run: python phase3_scale/validate_p0c.py
       - name: "Phase E1 validation (QEC: rotated surface code threshold, gross code, BP+OSD)"
         run: python phase2_noise/validate_e1.py
+      - name: "Phase E2 validation (Pauli propagation: exact checks, 127-qubit kicked Ising)"
+        run: python phase3_scale/validate_e2.py
       - name: QL1 validation (10 checks, TN compression)
         run: python phase4_llm/validate_ql1.py
       - name: QL7 validation (12 checks, QUBO solvers + GRPO selection, CPU)
