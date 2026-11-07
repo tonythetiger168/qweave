@@ -7,9 +7,12 @@
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 A complete quantum computing simulation platform with three development phases, designed to support the Quantum Computing Hardware R&D project.
+The repository also hosts **DiracLM**, qweave's quantum-inspired LLM line (`phase4_llm/`);
+see the [main README](../README.md#diraclm-the-quantum-inspired-llm-line-qwen3) and
+[QL results](QL_RESULTS.md).
 
-**Version:** 1.0  
-**Date:** September 2026  
+**Version:** 1.1  
+**Date:** November 2026  
 **Hardware Project:** [quantum-rd-plan](https://github.com/tonythetiger168/quantum-rd-plan)
 
 ---
@@ -40,12 +43,12 @@ auto_backend(c)                                  # -> 'native-clifford-sampler'
 BACKENDS['torch-statevector'].run(c)             # GPU when CUDA available
 ```
 
-Validate everything (58 checks incl. gold-standard comparison with Google Stim):
+Validate the simulators (63 checks incl. gold-standard comparison with Google Stim):
 
 ```bash
 python3 phase1_basic/validate_p0.py     # P0 engines          (14 checks)
 python3 phase2_noise/validate_p0b.py    # IR/trajectory/QEC   (22 checks)
-python3 phase3_scale/validate_p0c.py    # backends/MPS/IPEA/VQE (22 checks)
+python3 phase3_scale/validate_p0c.py    # backends/MPS/IPEA/VQE (27 checks)
 ```
 
 ---
@@ -120,13 +123,15 @@ This software suite provides four complementary quantum simulators and a complet
 ## Quick Start
 
 ```bash
+pip install -e .           # installs the `qweave` command
+
 # Run all phases
-python -m qpu_sim_suite
+qweave                     # or: python __main__.py
 
 # Run specific phase
-python -m qpu_sim_suite --phase 1
-python -m qpu_sim_suite --phase 2
-python -m qpu_sim_suite --phase 3
+qweave --phase 1
+qweave --phase 2
+qweave --phase 3
 ```
 
 ### Example: Bell State
@@ -328,6 +333,13 @@ qweave/
 |   |-- ipe.py                  # C-3: iterative phase estimation
 |   |-- vqe_sparse.py           # C-4: sparse Hamiltonians + parameter-shift
 |   |-- validate_p0c.py         # Phase C validation suite (27 checks)
+|-- phase4_llm/                 # DiracLM: quantum-inspired LLM line
+|   |-- tn_layers.py            # QL1: TT / MPO / whitened low-rank layers
+|   |-- heal_finetune.py        # QL1.5: compress + distillation heal
+|   |-- anneal_alloc.py         # QL2: greedy / SA / SQA rank allocation
+|   |-- qsa_attention.py        # QL3: entanglement diagnostics + sparse attention
+|   |-- eval/run_eval.py        # QL4: lm-eval + robustness harness
+|   |-- ql7_*.py                # QL7: QUBO prompt / layer selection for GRPO
 |-- docs/
 |   |-- README.md               # This file
 ```

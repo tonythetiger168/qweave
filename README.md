@@ -1,7 +1,7 @@
 # qweave
 
-Quantum simulation suite plus a quantum-inspired LLM track, with every claim
-checked against a named baseline and measured results checked into the repo.
+Quantum simulation suite plus **DiracLM**, a quantum-inspired LLM line, with every
+claim checked against a named baseline and measured results checked into the repo.
 
 - **Quantum simulators:** state-vector (numpy + torch/CUDA + cuStateVec),
   Clifford/stabilizer with Pauli-frame sampling, MPS, trajectory noise,
@@ -9,9 +9,10 @@ checked against a named baseline and measured results checked into the repo.
 - **Error correction:** detector error models, PyMatching, rotated surface code
   and IBM gross code with BP+OSD.
 - **Algorithms:** VQE (sparse), QAOA, QPE / IPEA.
-- **Quantum-inspired LLM work (QL track):** tensor-network / low-rank compression,
-  sparse attention and decode speed on Qwen3, benchmarked against
-  [FermiQLLM 1.0](docs/FERMIQLLM_GLOBAL_INVESTIGATION.md)'s claims.
+- **DiracLM (quantum-inspired LLMs, `phase4_llm/`):** tensor-network / low-rank
+  compression, quantum-inspired sparse attention and annealing-style RL selection on
+  Qwen3, benchmarked against [FermiQLLM 1.0](docs/FERMIQLLM_GLOBAL_INVESTIGATION.md)'s
+  claims. Open DiracLM weights are planned (QL8); none are published yet.
 
 **Hardware project:** [quantum-rd-plan](https://github.com/tonythetiger168/quantum-rd-plan) ·
 **License:** [Apache-2.0](LICENSE)
@@ -20,11 +21,11 @@ checked against a named baseline and measured results checked into the repo.
 
 ---
 
-## Status and latest results (2026-10-30)
+## Status and latest results (2026-11-03)
 
 All GPU numbers are from RunPod H100 80GB runs; raw reports are in
 [`results/`](results/README.md). Negative results are kept on purpose.
-Several phases are still in open pull requests, linked in the table.
+Phases still in open pull requests are linked in the table.
 
 ### Quantum simulation and error correction
 
@@ -33,10 +34,15 @@ Several phases are still in open pull requests, linked in the table.
 | I | State-vector, Clifford, MPS simulators | ✅ on `main` | All validation suites pass on CPU and H100 |
 | II | Noise, DEM + PyMatching decoding | ✅ on `main` (fixed in [#1](https://github.com/tonythetiger168/qweave/pull/1)) | Decoder bug fixed: d=3 repetition code at p=0.1% goes from 2.0% (worse than undecoded 0.65%) to **0.00%**; 33/33 single faults decode correctly |
 | III | VQE, QAOA, QPE/IPEA, backends | ✅ on `main` (GPU-host test fix in [#1](https://github.com/tonythetiger168/qweave/pull/1)) | 27 checks pass on CPU and H100 |
-| E1 | Rotated surface code + gross code [[144,12,12]], numpy BP+OSD | 🔄 [#7](https://github.com/tonythetiger168/qweave/pull/7) | Matches Stim's generator (d=3: 0.0167 vs 0.0168); threshold ≈ 1.2%, Λ = 2.0 at p=0.5%; gross code 2.5% vs 9.0% for 12 d=7 patches with 4.1× fewer data qubits |
-| E5 | GPU state vector + decoder timings | 🔄 [#8](https://github.com/tonythetiger168/qweave/pull/8) | Torch SV correct on CUDA, ~129× numpy at n=26. cuStateVec path: 3.5–9.4× faster than torch (~3.5 TB/s effective read+write), up to n=32. Gross-code decoding p=4% per shot: CUDA-Q QEC 7 µs, `ldpc` CPU 40 µs, qweave batched torch 50 µs |
+| E1 | Rotated surface code + gross code [[144,12,12]], numpy BP+OSD | ✅ on `main` ([#7](https://github.com/tonythetiger168/qweave/pull/7), [#10](https://github.com/tonythetiger168/qweave/pull/10)) | Matches Stim's generator (d=3: 0.0167 vs 0.0168); threshold ≈ 1.2%, Λ = 2.0 at p=0.5%; gross code 2.5% vs 9.0% for 12 d=7 patches with 4.1× fewer data qubits |
+| E5 | GPU state vector + decoder timings | ✅ on `main` ([#8](https://github.com/tonythetiger168/qweave/pull/8)) | Torch SV correct on CUDA, ~129× numpy at n=26. cuStateVec path: 3.5–9.4× faster than torch (~3.5 TB/s effective read+write), up to n=32. Gross-code decoding p=4% per shot: CUDA-Q QEC 7 µs, `ldpc` CPU 40 µs, qweave batched torch 50 µs |
 
-### Quantum-inspired LLM track (Qwen3)
+### DiracLM: the quantum-inspired LLM line (Qwen3)
+
+DiracLM is the name for qweave's LLM work and for the open-weights models it will
+release. "Quantum-inspired" means classical methods borrowed from quantum physics
+(tensor networks, entanglement diagnostics, simulated quantum annealing) running on
+ordinary GPUs. No quantum hardware is involved, and we make no quantum-advantage claim.
 
 | Phase | What | Status | Headline result |
 |---|---|---|---|
@@ -45,20 +51,23 @@ Several phases are still in open pull requests, linked in the table.
 | QL3 | Quantum-inspired sparse attention (QSA) | ✅ **gate passed** | 1.49× FlashAttention at 16K with +0.96% PPL; 3.47× at 32K (kernel only) |
 | QL4 | Open benchmark harness | ✅ delivered | lm-eval + robustness suite; shows PPL hides reasoning collapse (in-domain heal: PPL better than dense, GSM8K 0.0) |
 | QL5 | Knowledge-preserving compression (Qwen3-0.6B-Base) | 🔄 gate **FAIL** ([#4](https://github.com/tonythetiger168/qweave/pull/4)) | At −20% params: MMLU −8.7 pt [−9.5, −7.8], GSM8K −7.9 pt (gate −2 / −5); the dense control trained the same way does not drop |
-| QL6 | Batch-1 decode speed | 🔄 gate **FAIL** ([#5](https://github.com/tonythetiger168/qweave/pull/5)) | Low rank is 0.84–0.95× dense at batch 1 (kernel-bound, not byte-bound); 4B speculative decoding 0.81× after harness fixes; 32K prefill end to end 1.52× (needs 2×). Triton kernels (stage K) still running |
+| QL6 | Batch-1 decode speed | ❌ closed as a negative result ([#5](https://github.com/tonythetiger168/qweave/pull/5)) | Low rank is 0.84–0.95× dense at batch 1 (kernel-bound, not byte-bound); 4B speculative decoding 0.81× after harness fixes; 32K prefill end to end 1.52× (needs 2×); fused Triton low-rank kernels ~0.5× dense |
+| QL7 | RL at ≤0.75× GPU-hours (QUBO prompt / layer selection for GRPO) | 🔄 code on `main` ([#12](https://github.com/tonythetiger168/qweave/pull/12)), first GPU check pending | CPU checks 12/12; gate and run plan in [QL7 run plan](docs/QL7_RUN_PLAN.md) |
+| QL8 | DiracLM open-weights release (Qwen3-4B first) | 📝 planning | Ships only components that passed their gates (today: QSA); compared with the plain base on MATH-500, GPQA-Diamond and BBH |
 
 **Bottom line so far.** Tensor-network ideas only work on LLM weights after
 activation-aware whitening, and even then small models lose knowledge and math
 first. Quantum-inspired annealing loses to greedy on separable problems. The one
-clear win is QSA sparse attention at long context. Full write-ups:
+clear win so far is QSA sparse attention at long context, so it is the first
+component DiracLM ships. Full write-ups:
 [QL results](docs/QL_RESULTS.md), [surpass plan](docs/FERMIQLLM_SURPASS_PLAN.md),
 [QL5 results](https://github.com/tonythetiger168/qweave/blob/claude/ql5-quality/docs/QL5_RESULTS.md),
 [QL6 run plan + results](https://github.com/tonythetiger168/qweave/blob/claude/ql6-decode/docs/QL6_RUN_PLAN.md),
-[E5 GPU results](https://github.com/tonythetiger168/qweave/blob/claude/e5-gpu-bench/docs/E5_GPU_RESULTS.md).
+[E5 GPU results](docs/E5_GPU_RESULTS.md).
 
 ### Plans
 - [Simulator survey](docs/SURVEY.md) and [2025–2026 quantum research plan](docs/QUANTUM_RESEARCH_PLAN_2026.md) 
-- [Quantum LLM roadmap](docs/QUANTUM_LLM_ROADMAP.md) and [FermiQLLM investigation](docs/FERMIQLLM_GLOBAL_INVESTIGATION.md)
+- [Quantum LLM (DiracLM) roadmap](docs/QUANTUM_LLM_ROADMAP.md), [QL7 run plan](docs/QL7_RUN_PLAN.md) and [FermiQLLM investigation](docs/FERMIQLLM_GLOBAL_INVESTIGATION.md)
 
 ---
 
@@ -85,7 +94,7 @@ qweave                      # run all simulator milestones
 qweave --phase 1            # or: python __main__.py --phase 1
 ```
 
-Validation suites (CI runs the first three):
+Validation suites (CI runs all of these and more, see `.github/workflows/ci.yml`):
 
 ```bash
 python phase1_basic/validate_p0.py
@@ -100,7 +109,8 @@ python phase3_scale/validate_p0c.py
 ```
 
 ```bash
-python phase4_llm/validate_ql1.py
+python phase4_llm/validate_ql1.py     # DiracLM: TN compression engine
+python phase4_llm/validate_ql7.py     # DiracLM: QUBO selection for GRPO (CPU)
 ```
 
 ### Example: Bell state
@@ -161,7 +171,7 @@ qweave/
 ├── phase1_basic/            # SV / Clifford / MPS simulators, circuit IR, backends, GPU backend
 ├── phase2_noise/            # noise channels, trajectories, DEM + PyMatching, surface code
 ├── phase3_scale/            # VQE, QAOA, QPE / IPEA, MPS canonical form, sparse VQE
-├── phase4_llm/              # quantum-inspired LLM track (TN layers, heal, QSA, eval)
+├── phase4_llm/              # DiracLM: quantum-inspired LLM line (TN layers, heal, QSA, RL, eval)
 ├── scripts/                 # RunPod GPU runners
 ├── results/                 # raw reports from the GPU runs (see results/README.md)
 ├── docs/                    # surveys, roadmaps, result write-ups
